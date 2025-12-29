@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["adi", "adid-proxy", "android-coreadi", "apple-account", "apple-codesign-quick", "elf-loader", "plist-macros", "purple-builder", "super-sideloader"]
+
+[workspace.dependencies]
+adi = { path = "adi" }
+adid-proxy = { path = "adid-proxy" }
+android-coreadi = { path = "android-coreadi" }
+apple-account = { path = "apple-account" }
+elf-loader = { path = "elf-loader" }
+plist-macros = { path = "plist-macros" }
+
+plist = "1"
+reqwest = { version = "0.12", features = ["rustls-tls"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+aes = "0.9.0-rc.2"
+aes-gcm = "0.11.0-rc.2"
+cbc = { version = "0.2.0-rc.2", features = ["alloc"] }
+hmac = "0.13.0-rc.3"
+pbkdf2 = "0.13.0-rc.5"
+sha1 = "0.11.0-rc.3"
+sha2 = "0.11.0-rc.3"

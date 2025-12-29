@@ -1,0 +1,30 @@
+[package]
+name = "apple-account"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+adi.workspace = true
+plist.workspace = true
+plist-macros.workspace = true
+
+reqwest.workspace = true
+
+aes.workspace = true
+aes-gcm.workspace = true
+cbc.workspace = true
+hmac.workspace = true
+pbkdf2.workspace = true
+sha2.workspace = true
+
+base64 = "0.22.1"
+serde = { version = "1.0.228", features = ["derive"] }
+chrono = "0.4.42"
+iana-time-zone = "0.1.64"
+sys-locale = "0.3.2"
+srp = { git = "https://github.com/RustCrypto/PAKEs" }
+# srp = "0.7"
+rand = "0.9.2"
+hex = "0.4.3"
+bytes = "1.10.1"
+log = "0.4.29"

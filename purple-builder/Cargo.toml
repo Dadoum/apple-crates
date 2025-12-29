@@ -1,0 +1,14 @@
+[package]
+name = "purple-builder"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+adi = { workspace = true }
+elf-loader = { workspace = true }
+env_logger = "0.11.8"
+
+# gpui = "0.2"
+# gpui-component = "0.3"
+# # adabraka-ui = "0.2"
+# anyhow = "1.0.100"

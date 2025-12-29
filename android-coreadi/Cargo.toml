@@ -1,0 +1,11 @@
+[package]
+name = "android-coreadi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+adi.workspace = true
+elf-loader.workspace = true
+ouroboros = "0.18.5"
+libc = "0.2.176"
+rand = "0.9"

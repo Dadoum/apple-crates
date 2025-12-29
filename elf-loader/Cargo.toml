@@ -1,0 +1,12 @@
+[package]
+name = "elf-loader"
+version = "2.0.0"
+edition = "2024"
+
+[dependencies]
+goblin = { version = "0.10", default-features = false, features = ["std", "endian_fd", "elf32", "elf64"] }
+memmap2 = "0.9.8"
+region = "3.0"
+log = "0.4"
+
+sysv64 = { path = "./sysv64" }
