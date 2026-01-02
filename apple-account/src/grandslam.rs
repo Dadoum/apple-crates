@@ -2,7 +2,9 @@ mod anisette;
 mod post_data;
 mod secondary_actions;
 mod url_switch;
+mod authenticated_session;
 
+pub use authenticated_session::*;
 use crate::bundle_information::BundleInformation;
 use crate::device::Device;
 use crate::grandslam::AuthOutcome::AnisetteResyncRequired;
@@ -24,7 +26,7 @@ use bytes::Bytes;
 use cbc::cipher::{BlockModeDecrypt, KeyIvInit};
 use chrono::{Local, SecondsFormat};
 use hmac::{Hmac, KeyInit, Mac};
-use log::trace;
+use log::{trace, warn};
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
 pub use post_data::*;
@@ -320,7 +322,7 @@ pub fn build_client_provided_data(
 
 #[repr(u64)]
 enum StatusCode {
-    Success = 0,
+    Success = 200,
     SecondaryActionRequired = 409,
     AnisetteReprovisionRequired = 433,
     AnisetteResyncRequired = 434,
@@ -342,24 +344,6 @@ impl TryFrom<u64> for StatusCode {
             _ => Err(()),
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GSToken {
-    pub duration: u64,
-    // #[serde(rename = "cts")]
-    // pub start_epoch_millis: u64,
-    #[serde(rename = "expiry")]
-    pub expiry_epoch_millis: u64,
-    pub token: String,
-}
-
-#[derive(Debug)]
-pub struct AuthToken {
-    pub alt_dsid: String,
-    pub idms_token: String,
-    pub session_key: Vec<u8>,
-    pub cookie: Vec<u8>,
 }
 
 pub async fn login(
@@ -501,6 +485,8 @@ pub async fn login(
     let response_plist: Dictionary =
         plist::from_bytes(&response).map_err(|err| AuthError::Parsing(2, err))?;
 
+    trace!("Received: {:#?}", response_plist);
+
     let response_dict = response_plist
         .get("Response")
         .and_then(|response| response.as_dictionary())
@@ -615,202 +601,4 @@ pub async fn login(
             }
         }
     }
-}
-
-pub fn parse_tokens_from_server_provided_data(
-    server_provided_data: &Dictionary,
-) -> Option<(AuthToken, Vec<(String, GSToken)>)> {
-    let alt_dsid = server_provided_data
-        .get("adsid")
-        .and_then(|alt_dsid| alt_dsid.as_string())
-        .map(|alt_dsid| alt_dsid.to_string());
-
-    let idms_token = server_provided_data
-        .get("GsIdmsToken")
-        .and_then(|idms_token| idms_token.as_string())
-        .map(|idms_token| idms_token.to_string());
-
-    let session_key = server_provided_data
-        .get("sk")
-        .and_then(|session_key| session_key.as_data())
-        .map(|session_key| session_key.to_vec());
-
-    let cookie = server_provided_data
-        .get("c")
-        .and_then(|cookie| cookie.as_data())
-        .map(|cookie| cookie.to_vec());
-
-    let tokens = server_provided_data
-        .get("t")
-        .and_then(|tokens| tokens.as_dictionary())
-        .map(|tokens| {
-            tokens
-                .iter()
-                .filter_map(|(key, token)| {
-                    plist::from_value(token)
-                        .ok()
-                        .map(|token| (key.clone(), token))
-                })
-                .collect()
-        });
-
-    match (alt_dsid, idms_token, session_key, cookie) {
-        (Some(alt_dsid), Some(idms_token), Some(session_key), Some(cookie)) => Some((
-            AuthToken {
-                alt_dsid,
-                idms_token,
-                session_key,
-                cookie,
-            },
-            tokens.unwrap_or_default(),
-        )),
-        _ => None,
-    }
-}
-
-#[derive(Debug)]
-pub enum AppTokenRequestError {
-    InvalidURLBag,
-    Anisette(ADIError),
-    InvalidAuthToken,
-    Network(reqwest::Error),
-    Parsing(plist::Error),
-    Structure(Dictionary),
-    Apple(AppleError),
-    InvalidResponse,
-}
-
-impl std::fmt::Display for AppTokenRequestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            AppTokenRequestError::InvalidURLBag => write!(f, "Invalid URL bag"),
-            AppTokenRequestError::Anisette(err) => {
-                write!(f, "Cannot generate device authentication data: {err}")
-            }
-            AppTokenRequestError::InvalidAuthToken => {
-                write!(f, "The provided authentication token is not valid")
-            }
-            AppTokenRequestError::Network(err) => write!(f, "Network error: {err}"),
-            AppTokenRequestError::Parsing(err) => {
-                write!(f, "Failed to parse the app token request response: {err}")
-            }
-            AppTokenRequestError::Structure(_) => {
-                write!(f, "Failed to parse the app token request response")
-            }
-            AppTokenRequestError::Apple(err) => write!(f, "Cannot proceed: {err}"),
-            AppTokenRequestError::InvalidResponse => {
-                write!(f, "Invalid token returned by the server")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AppTokenRequestError {}
-
-pub async fn get_app_token(
-    http_session: &AnisetteHTTPSession<'_, '_>,
-    auth_token: &AuthToken,
-    app_token_identifier: &str,
-) -> Result<GSToken, AppTokenRequestError> {
-    let gs_service_url = http_session
-        .url_bag()
-        .get("gsService")
-        .and_then(Value::as_string)
-        .ok_or(AppTokenRequestError::InvalidURLBag)?;
-
-    let cpd = build_client_provided_data(http_session).map_err(AppTokenRequestError::Anisette)?;
-
-    let checksum = Hmac::<Sha256>::new_from_slice(&auth_token.session_key)
-        .map_err(|_| AppTokenRequestError::InvalidAuthToken)?
-        .chain_update("apptokens")
-        .chain_update(&auth_token.alt_dsid)
-        .chain_update(app_token_identifier)
-        .finalize()
-        .into_bytes()
-        .to_vec();
-
-    let request_plist = dict! {
-        "Header": dict!{
-            "Version": "1.0.1"
-        },
-        "Request": dict!{
-            "u": auth_token.alt_dsid.clone(),
-            "app": array![
-                app_token_identifier
-            ],
-            "c": Value::Data(auth_token.cookie.clone()),
-            "t": auth_token.idms_token.clone(),
-            "checksum": Value::Data(checksum),
-            "cpd": cpd,
-            "o": "apptokens",
-        }
-    };
-
-    let mut request_body = Vec::new();
-    plist::to_writer_xml(&mut request_body, &request_plist).unwrap();
-
-    let response = http_session
-        .anisette_request_builder(GRANDSLAM_DSID, Method::POST, gs_service_url)
-        .map_err(AppTokenRequestError::Anisette)?
-        .body(request_body)
-        .send()
-        .await
-        .map_err(AppTokenRequestError::Network)?
-        .bytes()
-        .await
-        .map_err(AppTokenRequestError::Network)?;
-
-    let response_plist: Dictionary =
-        plist::from_bytes(&response).map_err(AppTokenRequestError::Parsing)?;
-
-    let response_dict = response_plist
-        .get("Response")
-        .and_then(|response| response.as_dictionary())
-        .ok_or(AppTokenRequestError::Structure(response_plist.clone()))?;
-
-    // println!("Response: {response_dict:?}");
-
-    let status = response_dict
-        .get("Status")
-        .and_then(|status| status.as_dictionary())
-        .ok_or(AppTokenRequestError::Structure(response_plist.clone()))?;
-
-    parse_status(status).map_err(AppTokenRequestError::Apple)?;
-
-    let encrypted_tokens = response_dict
-        .get("et")
-        .and_then(|et| et.as_data())
-        .ok_or(AppTokenRequestError::Structure(response_plist.clone()))?;
-
-    let associated_data = &encrypted_tokens[0..3];
-    if associated_data != b"XYZ" {
-        return Err(AppTokenRequestError::InvalidResponse);
-    }
-
-    let iv = &encrypted_tokens[3..19];
-    let encrypted_token = &encrypted_tokens[19..];
-
-    let tokens_data = AesGcm::<Aes256, U16>::new_from_slice(&auth_token.session_key)
-        .map_err(|_| AppTokenRequestError::InvalidAuthToken)?
-        .decrypt(
-            // iv is of fixed size. It shall not fail.
-            iv.try_into().expect("Invalid IV size??"),
-            Payload {
-                msg: encrypted_token,
-                aad: associated_data,
-            },
-        )
-        .map_err(|_| AppTokenRequestError::InvalidResponse)?;
-
-    let tokens: Dictionary =
-        plist::from_bytes(&tokens_data).map_err(AppTokenRequestError::Parsing)?;
-
-    trace!("Decrypted token response: {:#?}", tokens);
-
-    tokens
-        .get("t")
-        .and_then(|token| token.as_dictionary())
-        .and_then(|token| token.get(app_token_identifier))
-        .and_then(|token| plist::from_value(token).ok())
-        .ok_or(AppTokenRequestError::InvalidResponse)
 }

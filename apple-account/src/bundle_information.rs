@@ -1,4 +1,4 @@
-pub struct BundleInformation<'lt> {
+pub struct BundleInformation<'lt> { // Maybe simplify to 'static?
     pub bundle_name: &'lt str,
     pub bundle_identifier: &'lt str,
     pub bundle_version: &'lt str,

@@ -2,7 +2,7 @@ use adi::proxy::ADIProxy;
 use android_coreadi::AndroidCoreADIProxy;
 use apple_account::bundle_information::{APPLE_TV_BUNDLE_INFORMATION, XCODE_BUNDLE_INFORMATION};
 use apple_account::device::Device;
-use apple_account::grandslam::AuthOutcome;
+use apple_account::grandslam::{AuthOutcome, AuthenticatedHTTPSession};
 use apple_account::http_session::AnisetteHTTPSession;
 use apple_account::{grandslam, itunes};
 use std::{env, fs};
@@ -38,9 +38,13 @@ async fn grandslam_test(
         AuthOutcome::Success(server_provided_data)
         | AuthOutcome::SecondaryActionRequired(server_provided_data, _) => {
             match grandslam::parse_tokens_from_server_provided_data(server_provided_data) {
-                Some((token, _)) => {
+                Some((auth_token, _)) => {
+                    let http_session = AuthenticatedHTTPSession::new(
+                        http_session,
+                        auth_token
+                    );
                     let xcode_token =
-                        grandslam::get_app_token(&http_session, &token, "com.apple.gs.xcode.auth")
+                        http_session.get_app_token("com.apple.gs.xcode.auth")
                             .await?;
                     println!("token: {:?}", xcode_token);
                 }
@@ -93,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", code);
     }
     let proxy = {
-        let core_adi_data = fs::read("nodistrib/lib/arm64-v8a/libCoreADI.so")?;
+        let core_adi_data = fs::read("nodistrib/lib/x86_64/libCoreADI.so")?;
         let proxy = AndroidCoreADIProxy::load_library(core_adi_data)?;
 
         proxy.set_android_id("0123456789012345")?;

@@ -168,8 +168,7 @@ impl<'data> Library<'data> {
             }
         };
 
-        relocate(&elf.dynrelas);
-        relocate(&elf.dynrels);
+        elf.shdr_relocs.iter().for_each(|(_, reloc_section)| relocate(reloc_section));
 
         let gnu_hash_section = elf
             .section_headers
