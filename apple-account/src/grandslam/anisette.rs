@@ -11,14 +11,14 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug)]
 pub enum ProvisioningError {
     ADIError(ADIError),
+    AppleError(AppleError),
+    URLNotFound(String),
     StartProvisioningRequest(reqwest::Error),
     StartProvisioningRequestPlist(plist::Error),
     StartProvisioningRequestStructure(Dictionary),
-    AppleError(AppleError),
     FinishProvisioningRequest(reqwest::Error),
     FinishProvisioningRequestPlist(plist::Error),
     FinishProvisioningRequestStructure(Dictionary),
-    URLNotFound(String),
 }
 
 impl Display for ProvisioningError {

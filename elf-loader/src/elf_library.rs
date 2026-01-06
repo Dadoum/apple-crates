@@ -168,7 +168,9 @@ impl<'data> Library<'data> {
             }
         };
 
-        elf.shdr_relocs.iter().for_each(|(_, reloc_section)| relocate(reloc_section));
+        elf.shdr_relocs
+            .iter()
+            .for_each(|(_, reloc_section)| relocate(reloc_section));
 
         let gnu_hash_section = elf
             .section_headers

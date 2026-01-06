@@ -116,10 +116,12 @@ impl<'lt> BasicHTTPSession<'lt> {
             let mut headers = HeaderMap::new();
             headers.insert(
                 "User-Agent",
-                client_bundle_info
-                    .bundle_name
-                    .parse()
-                    .map_err(HTTPSessionCreationError::InvalidHeader)?,
+                format!(
+                    "{}/{}",
+                    client_bundle_info.bundle_name, client_bundle_info.bundle_version
+                )
+                .parse()
+                .map_err(HTTPSessionCreationError::InvalidHeader)?,
             );
             headers.insert(
                 "X-MMe-Client-Info",

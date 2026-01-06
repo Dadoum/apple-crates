@@ -1,10 +1,9 @@
 mod anisette;
+mod authenticated_session;
 mod post_data;
 mod secondary_actions;
 mod url_switch;
-mod authenticated_session;
 
-pub use authenticated_session::*;
 use crate::bundle_information::BundleInformation;
 use crate::device::Device;
 use crate::grandslam::AuthOutcome::AnisetteResyncRequired;
@@ -12,31 +11,29 @@ use crate::http_session::{
     AnisetteHTTPSession, AppleError, BasicHTTPSession, HTTPSession, HTTPSessionCreationError,
     URLBagError, parse_status,
 };
+use crate::plist_request::dict_to_body;
 use adi::proxy::{ADIError, ADIResult};
-use aes::Aes256;
 use aes::cipher::block_padding;
 use aes::cipher::block_padding::Pkcs7;
-use aes_gcm::AesGcm;
-use aes_gcm::aead::consts::U16;
-use aes_gcm::aead::{Aead, Payload};
 pub use anisette::*;
+pub use authenticated_session::*;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use bytes::Bytes;
 use cbc::cipher::{BlockModeDecrypt, KeyIvInit};
 use chrono::{Local, SecondsFormat};
 use hmac::{Hmac, KeyInit, Mac};
-use log::{trace, warn};
+use log::trace;
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
 pub use post_data::*;
 use reqwest::{Certificate, Method, RequestBuilder};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use srp::client::SrpClient;
 use srp::groups::G_2048;
 use srp::types::SrpAuthError;
 use std::fmt::{Display, Formatter};
+use thiserror::Error;
 pub use url_switch::*;
 
 const ROOT_CA: &[u8] = include_bytes!("grandslam/root-ca.pem");
@@ -184,88 +181,34 @@ impl<'lt, 'lt2, 'adi> Token<'lt, 'lt2, 'adi> {
 #[derive(Debug)]
 pub enum AuthOutcome {
     Success(Dictionary),
-    SecondaryActionRequired(Dictionary, String),
+    SecondaryActionRequired(Option<Dictionary>, String),
     AnisetteResyncRequired(Vec<u8>),
     AnisetteReprovisionRequired,
     UrlSwitchingRequired(String),
 }
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum AuthError {
+    #[error("Could not log-in to Apple servers: {0}")]
+    Apple(#[from] AppleError),
+    #[error("Cannot generate device authentication data: {0}")]
+    Anisette(#[from] ADIError),
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+    // vvv Internal errors vvv
+    #[error("Invalid URL bag")]
     InvalidURLBag,
-    Apple(AppleError),
-    Anisette(ADIError),
-    Network(reqwest::Error),
-    Parsing(u8, plist::Error),
+    #[error("Cannot parse server response from step {auth_step}: {error}")]
+    Parsing { auth_step: u8, error: plist::Error },
+    #[error("Invalid server response structure (censor private data before reporting): {0:?}")]
     Structure(Dictionary),
-    SRP(SrpAuthError),
+    #[error("Authentication protocol failure: {0}")]
+    SRP(#[from] SrpAuthError),
+    #[error("Unknown server protocol: {0}")]
     UnknownProtocol(String),
-    Decryption(block_padding::Error),
+    #[error("Decryption error: {0}")]
+    Decryption(#[from] block_padding::Error),
 }
-
-/*
-impl From<SrpAuthError> for AuthError {
-    fn from(error: SrpAuthError) -> Self {
-        AuthError::SRP(error)
-    }
-}
-
-impl From<reqwest::Error> for AuthError {
-    fn from(error: reqwest::Error) -> Self {
-        Self::Network(error)
-    }
-}
-
-impl From<ADIError> for AuthError {
-    fn from(err: ADIError) -> AuthError {
-        AuthError::Anisette(err)
-    }
-}
-
-impl From<AppleError> for AuthError {
-    fn from(err: AppleError) -> AuthError {
-        AuthError::Apple(err)
-    }
-} // */
-
-impl Display for AuthError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            AuthError::InvalidURLBag => {
-                write!(f, "Invalid URL bag")
-            }
-            AuthError::Apple(err) => {
-                write!(f, "Could not log-in to Apple servers: {err}")
-            }
-            AuthError::Anisette(err) => {
-                write!(f, "Cannot generate device authentication data: {err}")
-            }
-            AuthError::Network(err) => {
-                write!(f, "Network error: {err}")
-            }
-            AuthError::Parsing(step, err) => {
-                write!(f, "Cannot parse server response from step {step}: {err}")
-            }
-            AuthError::Structure(dict) => {
-                write!(
-                    f,
-                    "Invalid server response structure (censor private data before reporting): {dict:?}"
-                )
-            }
-            AuthError::SRP(error) => {
-                write!(f, "Authentication protocol failure: {error}")
-            }
-            AuthError::UnknownProtocol(protocol) => {
-                write!(f, "Unknown server protocol: {protocol}")
-            }
-            AuthError::Decryption(block_padding) => {
-                write!(f, "Decryption error: {block_padding}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AuthError {}
 
 pub type AuthResult = Result<AuthOutcome, AuthError>;
 
@@ -357,8 +300,9 @@ pub async fn login(
         .and_then(Value::as_string)
         .ok_or(AuthError::InvalidURLBag)?;
 
-    let cpd = build_client_provided_data(http_session).map_err(AuthError::Anisette)?;
+    let cpd = build_client_provided_data(http_session)?;
 
+    // TODO: implement s4k, if some day someone needs that.
     let srp_client = SrpClient::<Sha256>::new_with_options(&G_2048, true);
     let a: [u8; 256] = rand::random();
     let a_pub = srp_client.compute_public_ephemeral(&a);
@@ -379,23 +323,19 @@ pub async fn login(
         }
     };
 
-    // TODO: make a function to easily send plist.
-    let mut request_body = Vec::new();
-    plist::to_writer_xml(&mut request_body, &request_plist).unwrap();
-
     let response = http_session
-        .anisette_request_builder(GRANDSLAM_DSID, Method::POST, gs_service_url)
-        .map_err(AuthError::Anisette)?
-        .body(request_body)
+        .anisette_request_builder(GRANDSLAM_DSID, Method::POST, gs_service_url)?
+        .body(dict_to_body(request_plist))
         .send()
-        .await
-        .map_err(AuthError::Network)?
+        .await?
         .bytes()
-        .await
-        .map_err(AuthError::Network)?;
+        .await?;
 
     let response_plist: Dictionary =
-        plist::from_bytes(&response).map_err(|err| AuthError::Parsing(1, err))?;
+        plist::from_bytes(&response).map_err(|error| AuthError::Parsing {
+            auth_step: 0,
+            error,
+        })?;
 
     let response_dict = response_plist
         .get("Response")
@@ -435,7 +375,9 @@ pub async fn login(
         .ok_or(AuthError::Structure(response_plist.clone()))?;
 
     let hashed_password: Vec<u8> = match selected_protocol {
-        "s2k" => Sha256::digest(password.as_bytes()).to_vec(),
+        // SRP with a 2048/4096-bit long A.
+        "s2k" | "s4k" => Sha256::digest(password.as_bytes()).to_vec(),
+        // SRP with a 2048-bit long A + fo?
         "s2k_fo" => hex::encode(Sha256::digest(password.as_bytes())).into_bytes(),
         _ => {
             return Err(AuthError::UnknownProtocol(selected_protocol.into()));
@@ -449,11 +391,10 @@ pub async fn login(
         buf
     };
 
-    let verifier = srp_client
-        .process_reply_rfc5054(&a, apple_id.as_bytes(), &processed_password, salt, b)
-        .map_err(AuthError::SRP)?;
+    let verifier =
+        srp_client.process_reply_rfc5054(&a, apple_id.as_bytes(), &processed_password, salt, b)?;
 
-    let cpd = build_client_provided_data(http_session).map_err(AuthError::Anisette)?;
+    let cpd = build_client_provided_data(http_session)?;
 
     let request_plist = dict! {
         "Header": dict!{
@@ -468,22 +409,19 @@ pub async fn login(
         }
     };
 
-    let mut request_body = Vec::new();
-    plist::to_writer_xml(&mut request_body, &request_plist).unwrap();
-
     let response = http_session
-        .anisette_request_builder(GRANDSLAM_DSID, Method::POST, gs_service_url)
-        .map_err(AuthError::Anisette)?
-        .body(request_body)
+        .anisette_request_builder(GRANDSLAM_DSID, Method::POST, gs_service_url)?
+        .body(dict_to_body(request_plist))
         .send()
-        .await
-        .map_err(AuthError::Network)?
+        .await?
         .bytes()
-        .await
-        .map_err(AuthError::Network)?;
+        .await?;
 
     let response_plist: Dictionary =
-        plist::from_bytes(&response).map_err(|err| AuthError::Parsing(2, err))?;
+        plist::from_bytes(&response).map_err(|error| AuthError::Parsing {
+            auth_step: 1,
+            error,
+        })?;
 
     trace!("Received: {:#?}", response_plist);
 
@@ -499,7 +437,7 @@ pub async fn login(
         .and_then(|status| status.as_dictionary())
         .ok_or(AuthError::Structure(response_plist.clone()))?;
 
-    parse_status(status).map_err(AuthError::Apple)?;
+    parse_status(status)?;
 
     let status_code: StatusCode = status
         .get("hsc")
@@ -511,7 +449,7 @@ pub async fn login(
     let server_provided_data = response_dict
         .get("spd")
         .and_then(|server_provided_data| server_provided_data.as_data())
-        .map(|server_provided_data| {
+        .map::<Result<_, AuthError>, _>(|server_provided_data| {
             let server_reply = response_dict
                 .get("M2")
                 .and_then(|server_reply| server_reply.as_data())
@@ -546,7 +484,10 @@ pub async fn login(
             .map_err(AuthError::Decryption)?;
 
             let server_provided_data: Dictionary = plist::from_bytes(&server_provided_data)
-                .map_err(|err| AuthError::Parsing(2, err))?;
+                .map_err(|error| AuthError::Parsing {
+                    auth_step: 3,
+                    error,
+                })?;
 
             trace!("Parsed server provided data: {:#?}", server_provided_data);
 
@@ -556,7 +497,8 @@ pub async fn login(
 
     match status_code {
         StatusCode::Success => {
-            let server_provided_data = server_provided_data.unwrap_or_default();
+            let server_provided_data =
+                server_provided_data.expect("No server data has been provided??");
             Ok(AuthOutcome::Success(server_provided_data))
         }
         StatusCode::SecondaryActionRequired => {
@@ -565,8 +507,6 @@ pub async fn login(
                 .and_then(|action_url| action_url.as_string())
                 .map(|action_url| action_url.to_string())
                 .ok_or(AuthError::Structure(response_plist))?;
-
-            let server_provided_data = server_provided_data.unwrap_or_default();
 
             Ok(AuthOutcome::SecondaryActionRequired(
                 server_provided_data,

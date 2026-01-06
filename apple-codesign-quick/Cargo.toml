@@ -8,7 +8,7 @@ plist.workspace = true
 
 tokio.workspace = true
 lief = "0.17"
-sha1 = "0.11.0-rc.3"
-sha2 = "0.11.0-rc.3"
+sha1.workspace = true
+sha2.workspace = true
 futures = "0.3.31"
 log = "0.4.28"

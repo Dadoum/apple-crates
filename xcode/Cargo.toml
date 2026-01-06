@@ -1,0 +1,12 @@
+[package]
+name = "xcode"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+apple-account.workspace = true
+adi.workspace = true
+plist.workspace = true
+plist-macros.workspace = true
+
+reqwest.workspace = true

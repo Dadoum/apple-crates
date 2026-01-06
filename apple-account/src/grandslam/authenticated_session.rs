@@ -1,3 +1,6 @@
+use crate::grandslam::{GRANDSLAM_DSID, build_client_provided_data};
+use crate::http_session::{AnisetteHTTPSession, AppleError, URLBag, parse_status};
+use adi::proxy::{ADIError, ADIResult};
 use aes::Aes256;
 use aes::cipher::consts::U16;
 use aes_gcm::aead::{Aead, Payload};
@@ -7,16 +10,14 @@ use base64::prelude::BASE64_STANDARD;
 use hmac::{Hmac, Mac};
 use log::{trace, warn};
 use plist::{Dictionary, Value};
+use plist_macros::{array, dict};
 use reqwest::{Method, RequestBuilder};
 use serde::Deserialize;
 use sha2::Sha256;
-use adi::proxy::{ADIError, ADIResult};
-use plist_macros::{array, dict};
-use crate::grandslam::{build_client_provided_data, GRANDSLAM_DSID};
-use crate::http_session::{parse_status, AnisetteHTTPSession, AppleError, URLBag};
+use thiserror::Error;
 
-#[derive(Debug, Deserialize)]
-pub struct GSToken {
+#[derive(Debug, Deserialize, Clone)]
+pub struct Token {
     pub duration: u64,
     // #[serde(rename = "cts")]
     // pub start_epoch_millis: u64,
@@ -49,7 +50,7 @@ impl AuthToken {
 
 pub fn parse_tokens_from_server_provided_data(
     server_provided_data: &Dictionary,
-) -> Option<(AuthToken, Vec<(String, GSToken)>)> {
+) -> Option<(AuthToken, Vec<(String, Token)>)> {
     let alt_dsid = server_provided_data
         .get("adsid")
         .and_then(|alt_dsid| alt_dsid.as_string())
@@ -86,85 +87,116 @@ pub fn parse_tokens_from_server_provided_data(
 
     match (alt_dsid, idms_token, session_key, cookie) {
         (Some(alt_dsid), Some(idms_token), Some(session_key), Some(cookie)) => Some((
-            AuthToken::new(
-                alt_dsid,
-                idms_token,
-                session_key,
-                cookie,
-            ),
+            AuthToken::new(alt_dsid, idms_token, session_key, cookie),
             tokens.unwrap_or_default(),
         )),
         _ => None,
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AppTokenRequestError {
-    InvalidURLBag,
-    Anisette(ADIError),
+    #[error("Cannot proceed: {0}")]
+    Apple(#[from] AppleError),
+    #[error("Cannot generate device authentication data: {0}")]
+    Anisette(#[from] ADIError),
+    #[error("The provided authentication token is not valid")]
     InvalidAuthToken,
-    Network(reqwest::Error),
-    Parsing(plist::Error),
+    // vvvv Internal errors vvvv
+    #[error("Invalid URL bag")]
+    InvalidURLBag,
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+    #[error("Failed to parse the app token request response: {0}")]
+    Parsing(#[from] plist::Error),
+    #[error("Failed to parse the app token request response")]
     Structure(Dictionary),
-    Apple(AppleError),
+    #[error("Invalid token returned by the server")]
     InvalidResponse,
 }
 
-impl std::fmt::Display for AppTokenRequestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            AppTokenRequestError::InvalidURLBag => write!(f, "Invalid URL bag"),
-            AppTokenRequestError::Anisette(err) => {
-                write!(f, "Cannot generate device authentication data: {err}")
-            }
-            AppTokenRequestError::InvalidAuthToken => {
-                write!(f, "The provided authentication token is not valid")
-            }
-            AppTokenRequestError::Network(err) => write!(f, "Network error: {err}"),
-            AppTokenRequestError::Parsing(err) => {
-                write!(f, "Failed to parse the app token request response: {err}")
-            }
-            AppTokenRequestError::Structure(_) => {
-                write!(f, "Failed to parse the app token request response")
-            }
-            AppTokenRequestError::Apple(err) => write!(f, "Cannot proceed: {err}"),
-            AppTokenRequestError::InvalidResponse => {
-                write!(f, "Invalid token returned by the server")
-            }
-        }
-    }
+pub struct AppTokenIdentifier<'lt>(pub &'lt str);
+
+#[derive(Debug, Error)]
+pub enum AuthenticatedRequestError {
+    #[error("Server returned: {0}")]
+    Apple(#[from] AppleError),
+    #[error("Cannot generate Anisette headers: {0}")]
+    Anisette(#[from] ADIError),
+    #[error("Invalid URL bag")]
+    InvalidURLBag,
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+    #[error("Invalid server response")]
+    InvalidResponse(plist::Error),
 }
 
-impl std::error::Error for AppTokenRequestError {}
+pub type AuthenticatedRequestResult<T> = Result<T, AuthenticatedRequestError>;
 
 pub struct AuthenticatedHTTPSession<'lt, 'adi> {
     pub http_session: AnisetteHTTPSession<'lt, 'adi>,
     pub auth_token: AuthToken,
+    pub hb_token: String,
 }
 
 impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
-    pub fn new(http_session: AnisetteHTTPSession<'a, 'b>, auth_token: AuthToken) -> Self {
+    pub fn new(
+        http_session: AnisetteHTTPSession<'a, 'b>,
+        auth_token: AuthToken,
+        heartbeat_token: Token,
+    ) -> Self {
+        let hb_token =
+            BASE64_STANDARD.encode(format!("{}:{}", auth_token.alt_dsid, heartbeat_token.token));
+
         Self {
             http_session,
             auth_token,
+            hb_token,
         }
     }
 
-    pub fn url_bag(&self) -> &URLBag { self.http_session.url_bag() }
-    pub fn simple_request_builder(&self, method: Method, url: &str) -> RequestBuilder { self.http_session.simple_request_builder(method, url) }
-    pub fn anisette_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> { self.http_session.anisette_request_builder(GRANDSLAM_DSID, method, url) }
-    pub fn authenticated_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
-        Ok(
-            self.anisette_request_builder(method, url)?
-                .header("X-Apple-Identity-Token", self.auth_token.identity_token.as_str())
-        )
+    pub fn url_bag(&self) -> &URLBag {
+        self.http_session.url_bag()
+    }
+
+    pub fn simple_request_builder(&self, method: Method, url: &str) -> RequestBuilder {
+        self.http_session.simple_request_builder(method, url)
+    }
+
+    pub fn anisette_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
+        self.http_session
+            .anisette_request_builder(GRANDSLAM_DSID, method, url)
+    }
+
+    pub fn authenticated_request_builder(
+        &self,
+        method: Method,
+        url: &str,
+    ) -> ADIResult<RequestBuilder> {
+        self.anisette_request_builder(method, url).map(|builder| {
+            builder
+                // .header(
+                //     "X-Apple-Identity-Token",
+                //     self.auth_token.identity_token.as_str(),
+                // )
+                // .header("X-Apple-I-Identity-Id", self.auth_token.alt_dsid.as_str())
+                // .header("X-Apple-DSID", self.auth_token.alt_dsid.as_str())
+                // .header("X-Apple-GS-Token", self.auth_token.idms_token.as_str())
+                // .header("X-Apple-I-CK-Presence", "false")
+                .header("X-Apple-HB-Token", self.hb_token.as_str())
+        })
     }
 
     pub async fn get_app_token(
         &self,
-        app_token_identifier: &str, // TODO: maybe create some type for app tokens identifier?
-    ) -> Result<GSToken, AppTokenRequestError> {
-        let AuthenticatedHTTPSession { http_session, auth_token } = self;
+        app_token_identifier: AppTokenIdentifier<'_>,
+    ) -> Result<Token, AppTokenRequestError> {
+        let app_token_identifier = app_token_identifier.0;
+        let AuthenticatedHTTPSession {
+            http_session,
+            auth_token,
+            ..
+        } = self;
 
         let gs_service_url = http_session
             .url_bag()
@@ -172,7 +204,8 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
             .and_then(Value::as_string)
             .ok_or(AppTokenRequestError::InvalidURLBag)?;
 
-        let cpd = build_client_provided_data(&http_session).map_err(AppTokenRequestError::Anisette)?;
+        let cpd =
+            build_client_provided_data(&http_session).map_err(AppTokenRequestError::Anisette)?;
 
         let checksum = Hmac::<Sha256>::new_from_slice(&auth_token.session_key)
             .map_err(|_| AppTokenRequestError::InvalidAuthToken)?
@@ -184,21 +217,21 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
             .to_vec();
 
         let request_plist = dict! {
-        "Header": dict!{
-            "Version": "1.0.1"
-        },
-        "Request": dict!{
-            "u": auth_token.alt_dsid.clone(),
-            "app": array![
-                app_token_identifier
-            ],
-            "c": Value::Data(auth_token.cookie.clone()),
-            "t": auth_token.idms_token.clone(),
-            "checksum": Value::Data(checksum),
-            "cpd": cpd,
-            "o": "apptokens",
-        }
-    };
+            "Header": dict!{
+                "Version": "1.0.1"
+            },
+            "Request": dict!{
+                "u": auth_token.alt_dsid.clone(),
+                "app": array![
+                    app_token_identifier
+                ],
+                "c": Value::Data(auth_token.cookie.clone()),
+                "t": auth_token.idms_token.clone(),
+                "checksum": Value::Data(checksum),
+                "cpd": cpd,
+                "o": "apptokens",
+            }
+        };
 
         let mut request_body = Vec::new();
         plist::to_writer_xml(&mut request_body, &request_plist).unwrap();
@@ -229,7 +262,7 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
             .and_then(|status| status.as_dictionary())
             .ok_or(AppTokenRequestError::Structure(response_plist.clone()))?;
 
-        parse_status(status).map_err(AppTokenRequestError::Apple)?;
+        parse_status(status)?;
 
         let encrypted_tokens = response_dict
             .get("et")
@@ -270,19 +303,39 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
             .ok_or(AppTokenRequestError::InvalidResponse)
     }
 
-    pub async fn validate_code(&self, validation_code: &str) -> Result<(), AppTokenRequestError> { // TODO: change that error type.
+    pub async fn fetch_user_info(&self) -> AuthenticatedRequestResult<Dictionary> {
+        let url = self
+            .http_session
+            .url_bag()
+            .get("fetchUserInfo")
+            .and_then(Value::as_string)
+            .ok_or(AuthenticatedRequestError::InvalidURLBag)?;
+
+        let response = self
+            .authenticated_request_builder(Method::GET, url)?
+            .send()
+            .await?
+            .bytes()
+            .await?;
+
+        Ok(plist::from_bytes(&response).map_err(AuthenticatedRequestError::InvalidResponse)?)
+    }
+
+    pub async fn validate_code(
+        &self,
+        validation_code: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // TODO: change that error type.
         let validate_code_url = self
             .url_bag()
             .get("validateCode")
             .and_then(Value::as_string)
             .ok_or(AppTokenRequestError::InvalidURLBag)?;
 
-        let _ =
-            self.authenticated_request_builder(Method::POST, validate_code_url)
-                .map_err(AppTokenRequestError::Anisette)?
-                .header("security-code", validation_code);
+        let _ = self
+            .authenticated_request_builder(Method::POST, validate_code_url)?
+            .header("security-code", validation_code);
 
         todo!()
     }
-
 }

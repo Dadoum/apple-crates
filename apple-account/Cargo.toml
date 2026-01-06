@@ -9,6 +9,7 @@ plist.workspace = true
 plist-macros.workspace = true
 
 reqwest.workspace = true
+thiserror.workspace = true
 
 aes.workspace = true
 aes-gcm.workspace = true
