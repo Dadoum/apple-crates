@@ -10,3 +10,8 @@ plist.workspace = true
 plist-macros.workspace = true
 
 reqwest.workspace = true
+thiserror.workspace = true
+
+serde = { version = "1.0.228", features = ["derive"] }
+sys-locale = "0.3.2"
+uuid = { version = "1.19", features = ["v4"] }

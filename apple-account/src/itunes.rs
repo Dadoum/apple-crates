@@ -12,6 +12,7 @@ use plist::{Dictionary, Value};
 use plist_macros::dict;
 use reqwest::Method;
 use thiserror::Error;
+use uuid::uuid;
 
 pub async fn http_session<'lt>(
     device: Device,
@@ -132,6 +133,8 @@ pub async fn login(
         })
         .collect::<Vec<_>>();
 
+    let uuid = uuid::Uuid::new_v4();
+
     let request_plist = dict! {
         "appleId": apple_id,
         "attempt": attempt,
@@ -145,19 +148,20 @@ pub async fn login(
             "paid": ""
         },
         // "kbsync": vec![],
-        "uuid": "3E72931A-9BFE-46EB-9EEA-3383CE091615", // TODO
+        "uuid": uuid.to_string().to_ascii_uppercase(),
         "why": "signIn",
     };
 
     let mut request_body = Vec::new();
     plist::to_writer_xml(&mut request_body, &request_plist).unwrap();
 
-    // println!("request_body: {}", String::from_utf8(request_body).unwrap());
+    println!("request_body: {}", String::from_utf8(request_body).unwrap());
 
     let signature = todo!();
+    // TODO: check if we need to sign the request following the sign-sap-request url bag key.
 
     let response = http_session
-        .anisette_request_builder(-2, Method::POST, authenticate_url)?
+        .anisette_request_builder(Method::POST, authenticate_url)?
         .body(request_body)
         .header("Content-Type", "application/x-apple-plist")
         // .header("X-Apple-ActionSignature", signature)

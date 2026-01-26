@@ -1,0 +1,8 @@
+[package]
+name = "library-coreadi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+adi.workspace = true
+dlopen2 = "0.8.2"

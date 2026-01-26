@@ -53,7 +53,7 @@ pub unsafe fn fstat(fildes: libc::c_int, buf: *mut stat) -> libc::c_int {
 }
 
 #[linux_cc]
-pub unsafe extern "C" fn open(path: *const libc::c_char, oflag: libc::c_int) -> libc::c_int {
+pub unsafe fn open(path: *const libc::c_char, oflag: libc::c_int) -> libc::c_int {
     let mut local_flag = 0;
 
     if oflag & 0b11 == O_WRONLY {

@@ -73,14 +73,14 @@ pub fn parse_status(status_dict: &Dictionary) -> Result<(), AppleError> {
 
 /// Abstracts a session with Apple servers.
 pub struct BasicHTTPSession<'lt> {
-    client: Client,
-    device: Device,
-    application_info: BundleInformation<'lt>,
+    pub client: Client,
+    pub device: Device,
+    pub application_info: BundleInformation<'lt>,
 }
 
 pub struct HTTPSession<'lt> {
-    http_session: BasicHTTPSession<'lt>,
-    url_bag: URLBag,
+    pub http_session: BasicHTTPSession<'lt>,
+    pub url_bag: URLBag,
 }
 
 #[derive(Debug)]
@@ -151,8 +151,10 @@ impl<'lt> BasicHTTPSession<'lt> {
             headers
         };
 
-        let client_builder = client_builder.default_headers(headers);
         let client = client_builder
+            .default_headers(headers)
+            // .connection_verbose(true)
+            // .http1_title_case_headers()
             .build()
             .map_err(HTTPSessionCreationError::Reqwest)?;
 
@@ -214,8 +216,8 @@ impl<'lt> HTTPSession<'lt> {
 }
 
 pub struct AnisetteHTTPSession<'lt, 'adi> {
-    http_session: HTTPSession<'lt>,
-    adi_proxy: &'adi dyn ADIProxy,
+    pub http_session: HTTPSession<'lt>,
+    pub adi_proxy: &'adi dyn ADIProxy,
 }
 
 impl<'lt, 'adi> AnisetteHTTPSession<'lt, 'adi> {
@@ -234,24 +236,42 @@ impl<'lt, 'adi> AnisetteHTTPSession<'lt, 'adi> {
         self.http_session.request_builder(method, url)
     }
 
-    pub fn anisette_request_builder(
-        &self,
-        ds_id: i64,
-        method: Method,
-        url: &str,
-    ) -> ADIResult<RequestBuilder> {
-        let (mid_b, otp_b) = self.adi_proxy.request_otp(ds_id)?;
+    pub fn anisette_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
+        let mut request_builder = self.simple_request_builder(method, url);
 
-        let mid = BASE64_STANDARD.encode(mid_b);
-        let otp = BASE64_STANDARD.encode(otp_b);
+        if self.adi_proxy.is_machine_provisioned(-2)? {
+            let ds_id = -2;
 
-        let rinfo = self.adi_proxy.get_idms_routing(ds_id)?;
+            let (mid_b, otp_b) = self.adi_proxy.request_otp(ds_id)?;
 
-        Ok(self
-            .simple_request_builder(method, url)
-            .header("X-Apple-I-MD", otp)
-            .header("X-Apple-I-MD-M", mid)
-            .header("X-Apple-I-MD-RINFO", rinfo))
+            let mid = BASE64_STANDARD.encode(mid_b);
+            let otp = BASE64_STANDARD.encode(otp_b);
+
+            let rinfo = self.adi_proxy.get_idms_routing(ds_id)?;
+
+            request_builder = request_builder
+                .header("X-Apple-I-MD", otp)
+                .header("X-Apple-I-MD-M", mid)
+                .header("X-Apple-I-MD-RINFO", rinfo);
+        }
+
+        if self.adi_proxy.is_machine_provisioned(-1)? {
+            let ds_id = -1;
+
+            let (mid_b, otp_b) = self.adi_proxy.request_otp(ds_id)?;
+
+            let mid = BASE64_STANDARD.encode(mid_b);
+            let otp = BASE64_STANDARD.encode(otp_b);
+
+            let rinfo = self.adi_proxy.get_idms_routing(ds_id)?;
+
+            request_builder = request_builder
+                .header("X-Apple-I-AMD", otp)
+                .header("X-Apple-I-AMD-M", mid)
+                .header("X-Apple-I-AMD-RINFO", rinfo);
+        }
+
+        Ok(request_builder)
     }
 
     pub fn device(&self) -> &Device {

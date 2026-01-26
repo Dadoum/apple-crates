@@ -7,10 +7,12 @@ use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{AesGcm, KeyInit};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
+use chrono::{Local, SecondsFormat};
 use hmac::{Hmac, Mac};
 use log::{trace, warn};
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
+use reqwest::header::{HeaderValue, InvalidHeaderValue};
 use reqwest::{Method, RequestBuilder};
 use serde::Deserialize;
 use sha2::Sha256;
@@ -24,6 +26,14 @@ pub struct Token {
     #[serde(rename = "expiry")]
     pub expiry_epoch_millis: u64,
     pub token: String,
+}
+
+impl TryFrom<&Token> for HeaderValue {
+    type Error = InvalidHeaderValue;
+
+    fn try_from(token: &Token) -> Result<Self, Self::Error> {
+        HeaderValue::from_str(token.token.as_str())
+    }
 }
 
 #[derive(Debug)]
@@ -164,8 +174,7 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
     }
 
     pub fn anisette_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
-        self.http_session
-            .anisette_request_builder(GRANDSLAM_DSID, method, url)
+        self.http_session.anisette_request_builder(method, url)
     }
 
     pub fn authenticated_request_builder(
@@ -174,16 +183,21 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
         url: &str,
     ) -> ADIResult<RequestBuilder> {
         self.anisette_request_builder(method, url).map(|builder| {
+            let client_time = Local::now()
+                .to_utc()
+                .to_rfc3339_opts(SecondsFormat::Secs, true);
+
+            let timezone = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
+            let locale = sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
+            let apple_locale = locale.replace('-', "_");
+
             builder
-                // .header(
-                //     "X-Apple-Identity-Token",
-                //     self.auth_token.identity_token.as_str(),
-                // )
-                // .header("X-Apple-I-Identity-Id", self.auth_token.alt_dsid.as_str())
-                // .header("X-Apple-DSID", self.auth_token.alt_dsid.as_str())
-                // .header("X-Apple-GS-Token", self.auth_token.idms_token.as_str())
-                // .header("X-Apple-I-CK-Presence", "false")
+                .header("Accept-Language", locale)
+                .header("X-Apple-I-Identity-Id", self.auth_token.alt_dsid.as_str())
                 .header("X-Apple-HB-Token", self.hb_token.as_str())
+                .header("X-Apple-Locale", apple_locale)
+                .header("X-Apple-I-Client-Time", client_time)
+                .header("X-Apple-I-TimeZone", timezone)
         })
     }
 
@@ -234,10 +248,10 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
         };
 
         let mut request_body = Vec::new();
-        plist::to_writer_xml(&mut request_body, &request_plist).unwrap();
+        plist::to_writer_xml(&mut request_body, &request_plist).expect("Serializing plist failed?");
 
         let response = http_session
-            .anisette_request_builder(GRANDSLAM_DSID, Method::POST, gs_service_url)
+            .anisette_request_builder(Method::POST, gs_service_url)
             .map_err(AppTokenRequestError::Anisette)?
             .body(request_body)
             .send()
@@ -318,7 +332,12 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
             .bytes()
             .await?;
 
-        Ok(plist::from_bytes(&response).map_err(AuthenticatedRequestError::InvalidResponse)?)
+        let dict =
+            plist::from_bytes(&response).map_err(AuthenticatedRequestError::InvalidResponse)?;
+
+        parse_status(&dict)?;
+
+        Ok(dict)
     }
 
     pub async fn validate_code(

@@ -3,6 +3,7 @@ use serde::{Serialize, Serializer};
 use std::ffi::CStr;
 use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
+use std::ops::Deref;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EncryptionType {
@@ -198,7 +199,18 @@ pub struct ADIPayload<Message: ADIMessage> {
     pub payload: Message,
 }
 
-pub struct ADIBuffer<'lt, T>(pub &'lt [T]);
+pub struct ADIBuffer<'lt, T>(pub Option<&'lt [T]>);
+
+impl<'lt, T> Deref for ADIBuffer<'lt, T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        match self.0 {
+            Some(arr) => arr,
+            None => &[],
+        }
+    }
+}
 
 pub struct ADIProvisioningSession<'lt> {
     pub val: u32,

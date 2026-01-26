@@ -93,7 +93,17 @@ pub type off64_t = libc::c_longlong;
 #[cfg(target_pointer_width = "64")]
 pub type off64_t = i64;
 
+#[cfg(target_pointer_width = "64")]
+pub type mode_t = u32;
 #[cfg(target_pointer_width = "32")]
 pub type mode_t = u16;
 
 pub type time_t = libc::c_long;
+
+pub type suseconds_t = i64;
+
+#[repr(C)]
+pub struct timeval {
+    pub tv_sec: time_t,
+    pub tv_usec: suseconds_t,
+}

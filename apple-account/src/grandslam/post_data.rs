@@ -1,32 +1,25 @@
-use crate::grandslam::{Token, TokenError};
+use crate::grandslam::AuthenticatedHTTPSession;
 use crate::http_session::{AppleError, parse_status};
+use crate::plist_request::plist_to_body;
+use adi::proxy::ADIError;
 use plist::{Dictionary, Value};
 use reqwest::Method;
 use serde::Serialize;
-use std::fmt::{Display, Formatter};
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum PostDataError {
-    Serialization(plist::Error),
-    Reqwest(reqwest::Error),
-    Apple(AppleError),
-    Token(TokenError),
-    URLNotFound,
+    #[error("Serialization failure! {0}")]
+    Serialization(#[from] plist::Error),
+    #[error("Failed to perform HTTP request! {0}")]
+    Network(#[from] reqwest::Error),
+    #[error("Failed to perform the request! {0}")]
+    Anisette(#[from] ADIError),
+    #[error("Failed to perform the request! {0}")]
+    Apple(#[from] AppleError),
+    #[error("Invalid URL bag.")]
+    InvalidURLBag,
 }
-
-impl Display for PostDataError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            PostDataError::Serialization(err) => write!(f, "Serialization failure! {err}"),
-            PostDataError::Reqwest(err) => write!(f, "Failed to perform HTTP request! {err}"),
-            PostDataError::Apple(err) => err.fmt(f),
-            PostDataError::Token(err) => err.fmt(f),
-            PostDataError::URLNotFound => write!(f, "Endpoint not found"),
-        }
-    }
-}
-
-impl std::error::Error for PostDataError {}
 
 #[derive(Debug, Default, Serialize)]
 pub struct DeviceData {
@@ -51,7 +44,7 @@ pub struct DeviceData {
     pub serial_number: Option<String>,
 }
 
-impl Token<'_, '_, '_> {
+impl AuthenticatedHTTPSession<'_, '_> {
     pub async fn post_data(&self, device_data: DeviceData) -> Result<(), PostDataError> {
         let post_data = plist::to_value(&device_data).map_err(PostDataError::Serialization)?;
         let post_data_url = self
@@ -59,27 +52,18 @@ impl Token<'_, '_, '_> {
             .url_bag()
             .get("postData")
             .and_then(Value::as_string)
-            .ok_or(PostDataError::URLNotFound)?;
+            .ok_or(PostDataError::InvalidURLBag)?;
 
-        let mut request_plist = Dictionary::new();
-        request_plist.insert("Request".into(), post_data);
+        let mut request = Dictionary::new();
+        request.insert("Request".into(), post_data);
 
-        let mut request_body = Vec::<u8>::new();
-        plist::to_writer_xml(&mut request_body, &request_plist)
-            .expect("Cannot write request plist??");
-
-        let request = self
-            .authenticated_request_builder(Method::POST, post_data_url)
-            .map_err(PostDataError::Token)?
-            .body(request_body);
-
-        let response = request
+        let response = self
+            .authenticated_request_builder(Method::POST, post_data_url)?
+            .body(plist_to_body(request.into()))
             .send()
-            .await
-            .map_err(PostDataError::Reqwest)?
+            .await?
             .bytes()
-            .await
-            .map_err(PostDataError::Reqwest)?;
+            .await?;
 
         let status: Dictionary =
             plist::from_bytes(&response).map_err(PostDataError::Serialization)?;

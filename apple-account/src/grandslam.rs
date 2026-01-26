@@ -27,12 +27,9 @@ use log::trace;
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
 pub use post_data::*;
-use reqwest::{Certificate, Method, RequestBuilder};
+use reqwest::{Certificate, Method};
 use sha2::{Digest, Sha256};
-use srp::client::SrpClient;
-use srp::groups::G_2048;
-use srp::types::SrpAuthError;
-use std::fmt::{Display, Formatter};
+use srp::groups::G2048;
 use thiserror::Error;
 pub use url_switch::*;
 
@@ -126,58 +123,6 @@ pub async fn http_session_with_custom_bag_url<'lt>(
     HTTPSession::new(http_session, url_bag)
 }
 
-pub struct Token<'lt, 'lt2, 'adi> {
-    http_session: &'lt AnisetteHTTPSession<'lt2, 'adi>,
-    alt_dsid: String,
-    token: String,
-}
-
-#[derive(Debug)]
-pub enum TokenError {
-    Expired,
-    ADI(ADIError),
-}
-
-impl Display for TokenError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TokenError::Expired => {
-                write!(f, "The session has expired.")
-            }
-            TokenError::ADI(error) => error.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for TokenError {}
-
-impl<'lt, 'lt2, 'adi> Token<'lt, 'lt2, 'adi> {
-    pub fn new(
-        http_session: &'lt AnisetteHTTPSession<'lt2, 'adi>,
-        alt_dsid: String,
-        token: String,
-    ) -> Result<Self, TokenError> {
-        // TODO check the validity of the token.
-        Ok(Self {
-            http_session,
-            alt_dsid,
-            token,
-        })
-    }
-
-    pub fn authenticated_request_builder(
-        &self,
-        method: Method,
-        url: &str,
-    ) -> Result<RequestBuilder, TokenError> {
-        Ok(self
-            .http_session
-            .anisette_request_builder(GRANDSLAM_DSID, method, url)
-            .map_err(TokenError::ADI)?
-            .header("X-Apple-I-Identity-Id", &self.alt_dsid)
-            .header("X-Apple-GS-Token", &self.token))
-    }
-}
 #[derive(Debug)]
 pub enum AuthOutcome {
     Success(Dictionary),
@@ -203,7 +148,7 @@ pub enum AuthError {
     #[error("Invalid server response structure (censor private data before reporting): {0:?}")]
     Structure(Dictionary),
     #[error("Authentication protocol failure: {0}")]
-    SRP(#[from] SrpAuthError),
+    SRP(#[from] srp::AuthError),
     #[error("Unknown server protocol: {0}")]
     UnknownProtocol(String),
     #[error("Decryption error: {0}")]
@@ -303,13 +248,14 @@ pub async fn login(
     let cpd = build_client_provided_data(http_session)?;
 
     // TODO: implement s4k, if some day someone needs that.
-    let srp_client = SrpClient::<Sha256>::new_with_options(&G_2048, true);
+    let srp_client = srp::Client::<G2048, Sha256>::new_with_options(false);
     let a: [u8; 256] = rand::random();
     let a_pub = srp_client.compute_public_ephemeral(&a);
 
     let request_plist = dict! {
         "Header": dict!{
-            "Version": "1.0.1"
+            "Version": "1.0.1",
+            // "GSClientIdentifier": "AppleIDAuthSupport",
         },
         "Request": dict!{
             "A2k": Value::Data(a_pub),
@@ -324,7 +270,7 @@ pub async fn login(
     };
 
     let response = http_session
-        .anisette_request_builder(GRANDSLAM_DSID, Method::POST, gs_service_url)?
+        .anisette_request_builder(Method::POST, gs_service_url)?
         .body(dict_to_body(request_plist))
         .send()
         .await?
@@ -392,7 +338,7 @@ pub async fn login(
     };
 
     let verifier =
-        srp_client.process_reply_rfc5054(&a, apple_id.as_bytes(), &processed_password, salt, b)?;
+        srp_client.process_reply(&a, apple_id.as_bytes(), &processed_password, salt, b)?;
 
     let cpd = build_client_provided_data(http_session)?;
 
@@ -410,7 +356,7 @@ pub async fn login(
     };
 
     let response = http_session
-        .anisette_request_builder(GRANDSLAM_DSID, Method::POST, gs_service_url)?
+        .anisette_request_builder(Method::POST, gs_service_url)?
         .body(dict_to_body(request_plist))
         .send()
         .await?

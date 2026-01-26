@@ -14,6 +14,7 @@ use bincode::serde::{decode_from_slice, encode_to_vec};
 use std::ffi::CStr;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
+use std::ptr::null;
 use std::slice;
 
 #[repr(C)]
@@ -78,6 +79,15 @@ impl<T: CoreADIProxy + ?Sized> CoreADIProxyHelper for T {
     }
 }
 
+#[inline]
+unsafe fn option_slice_from_raw_parts<'lt, T>(data: *const T, len: usize) -> Option<&'lt [T]> {
+    if len > 0 {
+        Some(unsafe { slice::from_raw_parts(data, len) })
+    } else {
+        None
+    }
+}
+
 impl<T: CoreADIProxyHelper + ?Sized> CoreADIADIProxy for T {
     fn initialize(&self) -> ADIResult<()> {
         let err = self.dispatch_message(InitializeMessage {})?;
@@ -106,7 +116,7 @@ impl<T: CoreADIProxyHelper + ?Sized> CoreADIADIProxy for T {
             Err(err.into())
         } else {
             Ok(ADIBuffer(unsafe {
-                slice::from_raw_parts(
+                option_slice_from_raw_parts(
                     adi_accounts_ptr.assume_init(),
                     adi_accounts_len.assume_init() as usize,
                 )
@@ -221,10 +231,16 @@ impl<T: CoreADIProxyHelper + ?Sized> CoreADIADIProxy for T {
         } else {
             Ok((
                 ADIBuffer(unsafe {
-                    slice::from_raw_parts(mid_ptr.assume_init(), mid_len.assume_init() as usize)
+                    option_slice_from_raw_parts(
+                        mid_ptr.assume_init(),
+                        mid_len.assume_init() as usize,
+                    )
                 }),
                 ADIBuffer(unsafe {
-                    slice::from_raw_parts(srm_ptr.assume_init(), srm_len.assume_init() as usize)
+                    option_slice_from_raw_parts(
+                        srm_ptr.assume_init(),
+                        srm_len.assume_init() as usize,
+                    )
                 }),
             ))
         }
@@ -255,27 +271,32 @@ impl<T: CoreADIProxyHelper + ?Sized> CoreADIADIProxy for T {
         } else {
             Ok((
                 ADIBuffer(unsafe {
-                    slice::from_raw_parts(mid_ptr.assume_init(), mid_len.assume_init() as usize)
+                    option_slice_from_raw_parts(
+                        mid_ptr.assume_init(),
+                        mid_len.assume_init() as usize,
+                    )
                 }),
                 ADIBuffer(unsafe {
-                    slice::from_raw_parts(otp_ptr.assume_init(), otp_len.assume_init() as usize)
+                    option_slice_from_raw_parts(
+                        otp_ptr.assume_init(),
+                        otp_len.assume_init() as usize,
+                    )
                 }),
             ))
         }
     }
 
     fn dispose(&self, buffer: ADIBuffer<'_, u8>) -> ADIResult<()> {
-        let buf = buffer.0;
+        let (ptr, _len) = match buffer.0 {
+            Some(buf) => (buf.as_ptr(), buf.len() as _),
+            None => (null(), 0u32),
+        };
         std::mem::forget(buffer);
-        let err = self.dispatch_message(StorageDisposeMessage { ptr: buf.as_ptr() })?;
+        let err = self.dispatch_message(StorageDisposeMessage { ptr })?;
         if err < 0 {
             let err = err.into();
             #[cfg(test)]
-            {
-                let ptr = buf.as_ptr();
-                let len = buf.len();
-                log::warn!("Leak of buf {ptr:p} of size {len}: {err:?}");
-            }
+            log::warn!("Leak of buf {ptr:p} of size {_len}: {err:?}");
             Err(err)
         } else {
             Ok(())
@@ -283,20 +304,16 @@ impl<T: CoreADIProxyHelper + ?Sized> CoreADIADIProxy for T {
     }
 
     fn dispose_account_storage(&self, buffer: ADIBuffer<'_, CoreADIAccount>) -> ADIResult<()> {
-        let buf = buffer.0;
+        let (ptr, len) = match buffer.0 {
+            Some(buf) => (buf.as_ptr(), buf.len() as _),
+            None => (null(), 0u32),
+        };
         std::mem::forget(buffer);
-        let err = self.dispatch_message(AllProvisionedAcctStorageDisposeMessage {
-            ptr: buf.as_ptr(),
-            len: buf.len() as u32,
-        })?;
+        let err = self.dispatch_message(AllProvisionedAcctStorageDisposeMessage { ptr, len })?;
         if err < 0 {
             let err = err.into();
             #[cfg(test)]
-            {
-                let ptr = buf.as_ptr();
-                let len = buf.len();
-                log::warn!("Leak of buf {ptr:p} of size {len}: {err:?}");
-            }
+            log::warn!("Leak of buf {ptr:p} of size {len}: {err:?}");
             Err(err)
         } else {
             Ok(())
@@ -384,7 +401,7 @@ impl<T: CoreADIADIProxy> ADIProxy for T {
     fn get_all_provisioned_accounts(&self) -> ADIResult<Vec<ADIAccount>> {
         let coreadi_accounts = <Self as CoreADIADIProxy>::get_all_provisioned_accounts(self)?;
         let accounts: Vec<ADIAccount> = unsafe {
-            coreadi_accounts.0.iter().map(
+            (&*coreadi_accounts).iter().map(
                 |&CoreADIAccount {
                      ds_id,
                      mid_len,
@@ -435,7 +452,7 @@ impl<T: CoreADIADIProxy> ADIProxy for T {
 
     fn synchronize(&self, ds_id: i64, sim: &[u8]) -> ADIResult<(Vec<u8>, Vec<u8>)> {
         let (mid_buf, srm_buf) = <Self as CoreADIADIProxy>::synchronize(self, ds_id, sim)?;
-        let (mid, srm) = (mid_buf.0.to_vec(), srm_buf.0.to_vec());
+        let (mid, srm) = (mid_buf.to_vec(), srm_buf.to_vec());
         self.dispose(mid_buf).and_then(|()| self.dispose(srm_buf))?;
         Ok((mid, srm))
     }
@@ -446,7 +463,7 @@ impl<T: CoreADIADIProxy> ADIProxy for T {
 
     fn request_otp(&self, ds_id: i64) -> ADIResult<(Vec<u8>, Vec<u8>)> {
         let (mid_buf, otp_buf) = <Self as CoreADIADIProxy>::request_otp(self, ds_id)?;
-        let (mid, otp) = (mid_buf.0.to_vec(), otp_buf.0.to_vec());
+        let (mid, otp) = (mid_buf.to_vec(), otp_buf.to_vec());
         self.dispose(mid_buf).and_then(|()| self.dispose(otp_buf))?;
         Ok((mid.into(), otp.into()))
     }
