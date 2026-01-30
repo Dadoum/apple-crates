@@ -127,10 +127,6 @@ impl<T: Deref<Target = [u8]>> AndroidCoreADIProxy<T> {
             .try_build()?,
         );
 
-        core_adi
-            .initialize()
-            .map_err(AndroidCoreADILoadingError::ADIError)?;
-
         Ok(core_adi)
     }
 }

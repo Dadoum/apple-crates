@@ -199,6 +199,7 @@ pub struct ADIPayload<Message: ADIMessage> {
     pub payload: Message,
 }
 
+#[must_use = "Must be freed using its proxy."]
 pub struct ADIBuffer<'lt, T>(pub Option<&'lt [T]>);
 
 impl<'lt, T> Deref for ADIBuffer<'lt, T> {
@@ -212,6 +213,7 @@ impl<'lt, T> Deref for ADIBuffer<'lt, T> {
     }
 }
 
+#[must_use = "Must be destroyed or finished using its proxy."]
 pub struct ADIProvisioningSession<'lt> {
     pub val: u32,
     pub proxy: PhantomData<&'lt dyn ADIProxy>,
@@ -219,20 +221,24 @@ pub struct ADIProvisioningSession<'lt> {
 
 impl<T> Drop for ADIBuffer<'_, T> {
     fn drop(&mut self) {
-        // it should never be called :(
-        // in D we could have added a static assert here giving a compiling error and preventing misuse.
-        panic!("The ADIBuffer {self:p} has not been disposed properly.");
+        if !std::thread::panicking() {
+            // it should never be called :(
+            // in D we could have added a static assert here giving a compiling error and preventing misuse.
+            panic!("The ADIBuffer {self:p} has not been disposed properly.");
+        }
     }
 }
 
 impl Drop for ADIProvisioningSession<'_> {
     fn drop(&mut self) {
-        // it should never be called :(
-        // in D we could have added a static assert here giving a compiling error and preventing misuse.
-        panic!(
-            "The ADIProvisioningSession {} has not been terminated properly.",
-            self.val
-        );
+        if !std::thread::panicking() {
+            // it should never be called :(
+            // in D we could have added a static assert here giving a compiling error and preventing misuse.
+            panic!(
+                "The ADIProvisioningSession {} has not been terminated properly.",
+                self.val
+            );
+        }
     }
 }
 

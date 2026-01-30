@@ -283,7 +283,7 @@ pub mod android {
         #[serde(serialize_with = "serialize_ptr")]
         pub provisioning_path: *const std::ffi::c_char,
     }
-    // */
+
     impl ADIMessage for SetAndroidIDMessage {
         const MAGIC: u32 = 0xc774d292;
         type ReturnType = i32;

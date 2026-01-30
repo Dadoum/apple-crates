@@ -1,5 +1,5 @@
 [package]
-name = "xcode"
+name = "itunes"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,6 +12,9 @@ plist-macros.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 
-serde = { version = "1.0.228", features = ["derive"] }
-sys-locale = "0.3.2"
-uuid = { version = "1.19", features = ["v4"] }
+base64 = "0.22.1"
+rand = "0.9.2"
+hex = "0.4.3"
+bytes = "1.10.1"
+log = "0.4.29"
+uuid = { version = "1.19.0", features = ["v4"] }

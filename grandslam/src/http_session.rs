@@ -106,7 +106,7 @@ impl<'lt> BasicHTTPSession<'lt> {
         client_bundle_info: BundleInformation<'lt>,
         custom_certificate: Option<Certificate>,
     ) -> Result<Self, HTTPSessionCreationError> {
-        let client_builder = Client::builder();
+        let client_builder = Client::builder().danger_accept_invalid_certs(true);
         let client_builder = match custom_certificate {
             Some(certificate) => client_builder.add_root_certificate(certificate),
             None => client_builder,

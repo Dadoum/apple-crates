@@ -475,16 +475,12 @@ pub async fn login(
         StatusCode::UrlSwitchingRequired => {
             let url_switching_data = status
                 .get("X-Apple-I-Data")
-                .and_then(|data| data.as_string());
+                .and_then(|data| data.as_string())
+                .ok_or(AuthError::Structure(response_plist.clone()))?;
 
-            match url_switching_data {
-                Some(url_switching_data) => Ok(AuthOutcome::UrlSwitchingRequired(
-                    url_switching_data.to_string(),
-                )),
-                None => {
-                    panic!("URL Switching has been required but no data has been given for it.")
-                }
-            }
+            Ok(AuthOutcome::UrlSwitchingRequired(
+                url_switching_data.to_string(),
+            ))
         }
     }
 }

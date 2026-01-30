@@ -171,34 +171,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
-name = "apple-account"
-version = "0.1.0"
-dependencies = [
- "adi",
- "aes",
- "aes-gcm",
- "base64 0.22.1",
- "bytes",
- "cbc",
- "chrono",
- "hex",
- "hmac",
- "iana-time-zone",
- "log",
- "pbkdf2",
- "plist",
- "plist-macros",
- "rand",
- "reqwest 0.13.1",
- "serde",
- "sha2",
- "srp",
- "sys-locale",
- "thiserror 2.0.17",
- "uuid",
-]
-
-[[package]]
 name = "apple-codesign"
 version = "0.1.0"
 dependencies = [
@@ -1109,6 +1081,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "grandslam"
+version = "0.1.0"
+dependencies = [
+ "adi",
+ "aes",
+ "aes-gcm",
+ "base64 0.22.1",
+ "bytes",
+ "cbc",
+ "chrono",
+ "hex",
+ "hmac",
+ "iana-time-zone",
+ "log",
+ "pbkdf2",
+ "plist",
+ "plist-macros",
+ "rand",
+ "reqwest 0.13.1",
+ "serde",
+ "sha2",
+ "srp",
+ "sys-locale",
+ "thiserror 2.0.17",
+ "uuid",
+]
+
+[[package]]
 name = "h2"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1629,6 +1629,24 @@ name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
+
+[[package]]
+name = "itunes"
+version = "0.1.0"
+dependencies = [
+ "adi",
+ "base64 0.22.1",
+ "bytes",
+ "grandslam",
+ "hex",
+ "log",
+ "plist",
+ "plist-macros",
+ "rand",
+ "reqwest 0.13.1",
+ "thiserror 2.0.17",
+ "uuid",
+]
 
 [[package]]
 name = "jiff"
@@ -2859,14 +2877,16 @@ dependencies = [
  "adi",
  "adid-proxy",
  "android-coreadi",
- "apple-account",
  "base64 0.22.1",
  "dlopen2",
  "elf-loader",
  "env_logger 0.11.8",
+ "grandslam",
+ "itunes",
  "libc",
  "library-coreadi",
  "reqwest 0.13.1",
+ "serde",
  "tokio",
  "xcode",
 ]
@@ -4091,7 +4111,7 @@ name = "xcode"
 version = "0.1.0"
 dependencies = [
  "adi",
- "apple-account",
+ "grandslam",
  "plist",
  "plist-macros",
  "reqwest 0.13.1",

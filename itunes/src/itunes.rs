@@ -1,13 +1,13 @@
-use crate::bundle_information::BundleInformation;
-use crate::device::Device;
-use crate::http_session::{
-    AnisetteHTTPSession, AppleError, BasicHTTPSession, HTTPSession, HTTPSessionCreationError,
-    URLBagError,
-};
 use adi::proxy::ADIError;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use bytes::Bytes;
+use grandslam::bundle_information::BundleInformation;
+use grandslam::device::Device;
+use grandslam::http_session::{
+    AnisetteHTTPSession, AppleError, BasicHTTPSession, HTTPSession, HTTPSessionCreationError,
+    URLBagError,
+};
 use plist::{Dictionary, Value};
 use plist_macros::dict;
 use reqwest::Method;
@@ -42,7 +42,7 @@ pub async fn http_session<'lt>(
     HTTPSession::new(http_session, url_bag)
 }
 
-pub(crate) fn parse_url_bag_response(url_bag_response: Bytes) -> Result<Dictionary, URLBagError> {
+pub fn parse_url_bag_response(url_bag_response: Bytes) -> Result<Dictionary, URLBagError> {
     let url_bag_plist =
         plist::from_bytes::<Dictionary>(&url_bag_response).map_err(|_| URLBagError::Parsing)?;
 

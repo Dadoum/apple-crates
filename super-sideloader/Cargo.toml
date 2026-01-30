@@ -6,8 +6,9 @@ edition = "2021"
 [dependencies]
 adi.workspace = true
 android-coreadi.workspace = true
-apple-account.workspace = true
 elf-loader.workspace = true
+grandslam.workspace = true
+itunes.workspace = true
 xcode.workspace = true
 
 tokio.workspace = true
@@ -15,6 +16,7 @@ libc = "0.2.176"
 reqwest = "0.13.1"
 env_logger = "0.11.8"
 base64 = "0.22.1"
+serde = { version = "1.0.228", features = ["derive"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 adid-proxy.workspace = true

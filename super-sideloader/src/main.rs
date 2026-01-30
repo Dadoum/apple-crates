@@ -1,12 +1,44 @@
+use adi::core_adi;
 use adi::proxy::ADIProxy;
 use android_coreadi::AndroidCoreADIProxy;
-use apple_account::bundle_information::APPLE_TV_BUNDLE_INFORMATION;
-use apple_account::device::Device;
-use apple_account::grandslam::{AuthOutcome, AuthenticatedHTTPSession};
-use apple_account::http_session::AnisetteHTTPSession;
-use apple_account::{grandslam, itunes};
+use grandslam::bundle_information::APPLE_TV_BUNDLE_INFORMATION;
+use grandslam::device::Device;
+use grandslam::http_session::AnisetteHTTPSession;
+use grandslam::{AuthOutcome, AuthenticatedHTTPSession};
 use std::{env, fs};
 use xcode::{ViewDeveloperAction, XcodeSession, XCODE_BUNDLE_INFORMATION, XCODE_TOKEN_IDENTIFIER};
+
+fn build_device() -> Device {
+    // Fake mac
+    if cfg!(target_os = "windows") {
+        // Windows anisette provisioning endpoints wants you to use an appropriate Windows Client-Info.
+        // Apple doesn't care about the fact you are running Xcode on Windows.
+        let operating_system = "Windows";
+        let system_version = "10.0.18362/SP0.0.18362";
+        let system_edition = "Win10 Pro";
+        let system_arch = "x64";
+
+        Device {
+            device_model: "PC".to_string(),
+            operating_system_information: format!(
+                "{}; {}; {}; {}",
+                operating_system, system_version, system_edition, system_arch
+            ),
+            // It shoudl look like a FairPlay GUID.
+            // It is built with a certain logic too, but IIRC it's basically hashes all the way.
+            // device_uuid: "00000000.00000000.00000000.00000000.00000000.00000000.00000000".to_string(),
+
+            // That one is not possible in real situations. But Apple also accepts it /shrug
+            device_uuid: "A8B31C86-359B-4D95-8950-BA5DD8FFC46F".to_string(),
+        }
+    } else {
+        Device {
+            device_model: "MacBookPro13,2".to_string(),
+            operating_system_information: "macOS;15.6.1;24G90".to_string(),
+            device_uuid: "A8B31C86-359B-4D95-8950-BA5DD8FFC46F".to_string(),
+        }
+    }
+}
 
 async fn grandslam_test(
     proxy: &dyn ADIProxy,
@@ -16,11 +48,7 @@ async fn grandslam_test(
     // proxy.set_android_id("0123456789012345")?;
     // proxy.set_provisioning_path(c"./adi_files")?;
 
-    let device = Device {
-        device_model: "MacBookPro13,2".to_string(),
-        operating_system_information: "macOS;15.6.1;24G90".to_string(),
-        device_uuid: "A8B31C86-359B-4D95-8950-BA5DD8FFC46F".to_string(),
-    };
+    let device = build_device();
 
     // println!("{:#02X?}", proxy.get_all_provisioned_accounts());
 
@@ -33,7 +61,7 @@ async fn grandslam_test(
         grandslam::provision(&http_session).await?;
     }
 
-    // Here we should fetch_auth_mode first to know if we should log-in with a password.
+    // Here we should fetch_auth_mode first to know if we should log in with a password.
     let auth_outcome = grandslam::login(&http_session, apple_id, password).await?;
 
     match &auth_outcome {
@@ -150,13 +178,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")]
     let library = dlopen2::symbor::Library::open("C:\\Program Files\\iTunes\\CoreADI64.dll")?;
     #[cfg(target_os = "windows")]
-    let proxy = library_coreadi::LibraryCoreADIProxy::new(&library)?;
+    let proxy = {
+        let proxy = library_coreadi::LibraryCoreADIProxy::new(&library)?;
+
+        core_adi::CoreADIADIProxy::initialize(&proxy)?;
+
+        proxy
+    };
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let proxy = {
         let core_adi_data = fs::read("nodistrib/lib/x86_64/libCoreADI.so")?;
         let proxy = AndroidCoreADIProxy::load_library(core_adi_data)?;
-
+        core_adi::CoreADIADIProxy::initialize(&proxy)?;
         proxy.set_android_id("0123456789012345")?;
         proxy.set_provisioning_path(c"./adi_files")?;
 
