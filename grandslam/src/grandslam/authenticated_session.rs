@@ -36,7 +36,7 @@ impl TryFrom<&Token> for HeaderValue {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AuthToken {
     pub alt_dsid: String,
     pub idms_token: String,
@@ -143,6 +143,7 @@ pub enum AuthenticatedRequestError {
 
 pub type AuthenticatedRequestResult<T> = Result<T, AuthenticatedRequestError>;
 
+#[derive(Clone)]
 pub struct AuthenticatedHTTPSession<'lt, 'adi> {
     pub http_session: AnisetteHTTPSession<'lt, 'adi>,
     pub auth_token: AuthToken,
@@ -257,6 +258,7 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
             .send()
             .await
             .map_err(AppTokenRequestError::Network)?
+            .error_for_status()?
             .bytes()
             .await
             .map_err(AppTokenRequestError::Network)?;
@@ -267,21 +269,21 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
         let response_dict = response_plist
             .get("Response")
             .and_then(|response| response.as_dictionary())
-            .ok_or(AppTokenRequestError::Structure(response_plist.clone()))?;
+            .ok_or_else(|| AppTokenRequestError::Structure(response_plist.clone()))?;
 
         // println!("Response: {response_dict:?}");
 
         let status = response_dict
             .get("Status")
             .and_then(|status| status.as_dictionary())
-            .ok_or(AppTokenRequestError::Structure(response_plist.clone()))?;
+            .ok_or_else(|| AppTokenRequestError::Structure(response_plist.clone()))?;
 
         parse_status(status)?;
 
         let encrypted_tokens = response_dict
             .get("et")
             .and_then(|et| et.as_data())
-            .ok_or(AppTokenRequestError::Structure(response_plist.clone()))?;
+            .ok_or_else(|| AppTokenRequestError::Structure(response_plist.clone()))?;
 
         let associated_data = &encrypted_tokens[0..3];
         if associated_data != b"XYZ" {

@@ -129,6 +129,7 @@ impl<'a, 'b> XcodeSession<'a, 'b> {
             .body(plist_to_body(base_request.into()))
             .send()
             .await?
+            .error_for_status()?
             .bytes()
             .await?;
 

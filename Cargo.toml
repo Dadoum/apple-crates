@@ -18,10 +18,10 @@ reqwest = { version = "0.13", features = ["rustls", "query", "gzip"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
-aes = "0.9.0-rc.2"
-aes-gcm = "0.11.0-rc.2"
-cbc = { version = "0.2.0-rc.2", features = ["alloc"] }
-hmac = "0.13.0-rc.4"
-pbkdf2 = "0.13.0-rc.8"
-sha1 = "0.11.0-rc.4"
-sha2 = "0.11.0-rc.4"
+aes = "0.9.0-rc.4"
+aes-gcm = "0.11.0-rc.3"
+cbc = { version = "0.2.0-rc.3", features = ["alloc"] }
+hmac = "0.13.0-rc.5"
+pbkdf2 = "0.13.0-rc.9"
+sha1 = "0.11.0-rc.5"
+sha2 = "0.11.0-rc.5"

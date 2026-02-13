@@ -92,6 +92,8 @@ pub(crate) fn parse_url_bag_response(url_bag_response: Bytes) -> Result<Dictiona
         .cloned()
         .ok_or(URLBagError::InvalidUrlBag)?;
 
+    println!("{:#?}", url_bag_plist);
+
     Ok(url_bag_plist)
 }
 
@@ -274,6 +276,7 @@ pub async fn login(
         .body(dict_to_body(request_plist))
         .send()
         .await?
+        .error_for_status()?
         .bytes()
         .await?;
 
@@ -357,9 +360,17 @@ pub async fn login(
 
     let response = http_session
         .anisette_request_builder(Method::POST, gs_service_url)?
+        // HACK: On success, Apple apps pass the obtained data to the app,
+        // which will then initialize another HTTP client, with a new TLS session.
+        // Here, it would not create a new TLS session, and I don't want to force
+        // people to use a new HTTP session on success. So instead, I force the connection
+        // to be interrupted here. It is important because on some networks, the apptokens
+        // request fails if the TLS session is kept alive.
+        .header("Connection", "close")
         .body(dict_to_body(request_plist))
         .send()
         .await?
+        .error_for_status()?
         .bytes()
         .await?;
 
@@ -369,7 +380,7 @@ pub async fn login(
             error,
         })?;
 
-    trace!("Received: {:#?}", response_plist);
+    // trace!("Received: {:#?}", response_plist);
 
     let response_dict = response_plist
         .get("Response")

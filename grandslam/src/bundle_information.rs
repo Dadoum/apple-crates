@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct BundleInformation<'lt> {
     // Maybe simplify to 'static?
     pub bundle_name: &'lt str,

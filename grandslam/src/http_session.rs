@@ -9,6 +9,7 @@ use reqwest::header::{HeaderMap, InvalidHeaderValue};
 use reqwest::{Certificate, Client, Method, RequestBuilder};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 const SIMULATED_AUTHENTICATION_FRAMEWORK_INFORMATION: BundleInformation =
     AUTH_KIT_BUNDLE_INFORMATION;
@@ -72,12 +73,14 @@ pub fn parse_status(status_dict: &Dictionary) -> Result<(), AppleError> {
 }
 
 /// Abstracts a session with Apple servers.
+#[derive(Clone)]
 pub struct BasicHTTPSession<'lt> {
     pub client: Client,
     pub device: Device,
     pub application_info: BundleInformation<'lt>,
 }
 
+#[derive(Clone)]
 pub struct HTTPSession<'lt> {
     pub http_session: BasicHTTPSession<'lt>,
     pub url_bag: URLBag,
@@ -106,7 +109,7 @@ impl<'lt> BasicHTTPSession<'lt> {
         client_bundle_info: BundleInformation<'lt>,
         custom_certificate: Option<Certificate>,
     ) -> Result<Self, HTTPSessionCreationError> {
-        let client_builder = Client::builder().danger_accept_invalid_certs(true);
+        let client_builder = Client::builder();
         let client_builder = match custom_certificate {
             Some(certificate) => client_builder.add_root_certificate(certificate),
             None => client_builder,
@@ -153,8 +156,7 @@ impl<'lt> BasicHTTPSession<'lt> {
 
         let client = client_builder
             .default_headers(headers)
-            // .connection_verbose(true)
-            // .http1_title_case_headers()
+            .connection_verbose(false)
             .build()
             .map_err(HTTPSessionCreationError::Reqwest)?;
 
@@ -215,6 +217,7 @@ impl<'lt> HTTPSession<'lt> {
     }
 }
 
+#[derive(Clone)]
 pub struct AnisetteHTTPSession<'lt, 'adi> {
     pub http_session: HTTPSession<'lt>,
     pub adi_proxy: &'adi dyn ADIProxy,
@@ -263,12 +266,9 @@ impl<'lt, 'adi> AnisetteHTTPSession<'lt, 'adi> {
             let mid = BASE64_STANDARD.encode(mid_b);
             let otp = BASE64_STANDARD.encode(otp_b);
 
-            let rinfo = self.adi_proxy.get_idms_routing(ds_id)?;
-
             request_builder = request_builder
                 .header("X-Apple-I-AMD", otp)
-                .header("X-Apple-I-AMD-M", mid)
-                .header("X-Apple-I-AMD-RINFO", rinfo);
+                .header("X-Apple-I-AMD-M", mid);
         }
 
         Ok(request_builder)

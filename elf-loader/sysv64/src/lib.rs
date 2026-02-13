@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn, Signature, TypeBareFn};
+use syn::{parse_macro_input, ItemFn, Signature};
 
 #[proc_macro_attribute]
 pub fn sysv64(_attr: TokenStream, item: TokenStream) -> TokenStream {

@@ -4,8 +4,9 @@ use android_coreadi::AndroidCoreADIProxy;
 use grandslam::bundle_information::APPLE_TV_BUNDLE_INFORMATION;
 use grandslam::device::Device;
 use grandslam::http_session::AnisetteHTTPSession;
-use grandslam::{AuthOutcome, AuthenticatedHTTPSession};
+use grandslam::{AppTokenRequestError, AuthOutcome, AuthenticatedHTTPSession, AuthenticatedRequestError};
 use std::{env, fs};
+use reqwest::{Method, StatusCode};
 use xcode::{ViewDeveloperAction, XcodeSession, XCODE_BUNDLE_INFORMATION, XCODE_TOKEN_IDENTIFIER};
 
 fn build_device() -> Device {
@@ -24,7 +25,7 @@ fn build_device() -> Device {
                 "{}; {}; {}; {}",
                 operating_system, system_version, system_edition, system_arch
             ),
-            // It shoudl look like a FairPlay GUID.
+            // It should look like a FairPlay GUID.
             // It is built with a certain logic too, but IIRC it's basically hashes all the way.
             // device_uuid: "00000000.00000000.00000000.00000000.00000000.00000000.00000000".to_string(),
 
@@ -33,9 +34,9 @@ fn build_device() -> Device {
         }
     } else {
         Device {
-            device_model: "MacBookPro13,2".to_string(),
-            operating_system_information: "macOS;15.6.1;24G90".to_string(),
-            device_uuid: "A8B31C86-359B-4D95-8950-BA5DD8FFC46F".to_string(),
+            device_model: "Mac16,8".to_string(),
+            operating_system_information: "macOS;15.7.3;24G419".to_string(),
+            device_uuid: "229B41B5-93B0-5632-9E1A-D4EF0669C3C1".to_string(),
         }
     }
 }
@@ -188,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let proxy = {
-        let core_adi_data = fs::read("nodistrib/lib/x86_64/libCoreADI.so")?;
+        let core_adi_data = fs::read("nodistrib/lib/arm64-v8a/libCoreADI.so")?;
         let proxy = AndroidCoreADIProxy::load_library(core_adi_data)?;
         core_adi::CoreADIADIProxy::initialize(&proxy)?;
         proxy.set_android_id("0123456789012345")?;
