@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["adi", "adid-proxy", "android-coreadi", "grandslam", "apple-codesign-quick", "elf-loader", "fairplay", "itunes", "library-coreadi", "plist-macros", "purple-builder", "super-sideloader", "xcode"]
+members = ["adi", "adid-proxy", "android-coreadi", "grandslam", "apple-codesign-quick", "elf-loader", "fairplay", "itunes", "library-coreadi", "plist-macros", "purple-builder", "sapsig", "super-sideloader", "xcode"]
 
 [workspace.dependencies]
 adi = { path = "adi" }
@@ -14,7 +14,7 @@ plist-macros = { path = "plist-macros" }
 xcode = { path = "xcode" }
 
 plist = "1"
-reqwest = { version = "0.13", features = ["rustls", "query", "gzip"] }
+reqwest = { version = "0.13", features = ["rustls", "query", "gzip", "blocking"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 

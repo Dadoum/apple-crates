@@ -1,0 +1,15 @@
+[package]
+name = "sapsig"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+goblin = "0.9"
+lazy_static = "1.4"
+libc = "0.2"
+plist.workspace = true
+rand = "0.8"
+reqwest.workspace = true
+thiserror.workspace = true
