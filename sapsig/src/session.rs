@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use crate::elf_loader::{LoadedLibrary, clear_registered_libraries, install_wx_signal_handler};
 use crate::hooks;
 
-// ── Symbol constants ──
+// -- Symbol constants --
 
 pub const SYM_LOAD_DEPS: &str = "kq56gsgHG6";
 pub const SYM_MESCAL_SIGN_STRING: &str = "_ZN17storeservicescore6Mescal4signERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE";
@@ -50,14 +50,25 @@ pub const DEFAULT_PRELOAD_LIBS: &[&str] = &[
     "libCoreFP.so",
 ];
 const DEFAULT_SAP_VERSION: u32 = 0xC8;
+const SAP_SETUP_CERT_URL: &str = "https://s.mzstatic.com/sap/setup.crt";
+const SAP_SETUP_POST_URL: &str =
+    "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/signSapSetup";
 
-// ── Environment helpers ──
+// -- Environment helpers --
 
 pub fn env_flag(name: &str) -> bool {
     env::var(name)
         .ok()
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
+}
+
+macro_rules! sap_trace {
+    ($($arg:tt)*) => {
+        if env_flag("XAS_SAP_TRACE") {
+            eprintln!($($arg)*);
+        }
+    };
 }
 
 pub fn env_default_true(name: &str) -> bool {
@@ -111,7 +122,7 @@ pub fn env_opt_usize(name: &str) -> Option<usize> {
         .and_then(|raw| parse_env_usize_value(&raw))
 }
 
-// ── Android TLS guard ──
+// -- Android TLS guard --
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 thread_local! {
@@ -191,7 +202,7 @@ where
     f()
 }
 
-// ── FairPlay SAP protocol call wrappers ──
+// -- FairPlay SAP protocol call wrappers --
 
 /// Call cp2g1b9ro (FairPlaySAPInit)
 /// Signature: cp2g1b9ro(ctx_out, hwinfo_ptr) -> i32
@@ -223,8 +234,9 @@ pub unsafe fn call_sap_init_cpp(_fn_addr: usize, _ctx_out: *mut u64, _hwinfo: *c
     -1
 }
 
-/// Call Mib5yocT (FairPlaySAPExchange) — 8 arguments
+/// Call Mib5yocT (FairPlaySAPExchange) with the native ABI argument layout.
 #[cfg(target_arch = "aarch64")]
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn call_sap_exchange_cpp(
     fn_addr: usize,
     version: u32,
@@ -306,7 +318,7 @@ pub unsafe fn call_sap_exchange_cpp(
     -1
 }
 
-/// Call Fc3vhtJDvr (FairPlaySAPSign) — 5 arguments
+/// Call Fc3vhtJDvr (FairPlaySAPSign) with the native ABI argument layout.
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn call_sap_sign_cpp(
     fn_addr: usize,
@@ -388,7 +400,7 @@ pub unsafe fn call_sap_teardown_cpp(_fn_addr: usize, _ctx: u64) -> i32 {
     -1
 }
 
-// ── Preload helpers ──
+// -- Preload helpers --
 
 pub fn normalize_path_key(path: &Path) -> String {
     if let Ok(canonical) = path.canonicalize() {
@@ -428,6 +440,7 @@ pub fn parse_dt_needed(path: &Path) -> Vec<String> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn preload_dependency_recursive(
     dep_path: &Path,
     native_lib_dir: &Path,
@@ -454,7 +467,7 @@ pub fn preload_dependency_recursive(
         if strict {
             bail!("{message}");
         }
-        eprintln!("Warning: {message}");
+        sap_trace!("Warning: {message}");
         return Ok(());
     }
 
@@ -481,7 +494,7 @@ pub fn preload_dependency_recursive(
 
     match LoadedLibrary::load(dep_path) {
         Ok(lib) => {
-            println!("Preloaded dependency: {}", dep_path.display());
+            sap_trace!("Preloaded dependency: {}", dep_path.display());
             loaded.push(lib);
             loaded_keys.insert(key.clone());
         }
@@ -492,7 +505,7 @@ pub fn preload_dependency_recursive(
                     format!("Failed to preload dependency {}", dep_path.display())
                 });
             }
-            eprintln!("Warning: failed to preload {}: {}", dep_path.display(), err);
+            sap_trace!("Warning: failed to preload {}: {}", dep_path.display(), err);
             return Ok(());
         }
     }
@@ -529,7 +542,7 @@ pub fn preload_dependency_libraries(
     Ok(loaded)
 }
 
-// ── StoreServicesCore ──
+// -- StoreServicesCore --
 
 pub struct StoreServicesCore {
     pub lib: LoadedLibrary,
@@ -599,7 +612,7 @@ impl StoreServicesCore {
     }
 }
 
-// ── HTTP / crypto helpers ──
+// -- HTTP / crypto helpers --
 
 /// Build the 24-byte FairPlay hardware info block from a hardware identifier.
 pub(crate) fn build_hwinfo_from_id(hardware_id: &[u8]) -> [u8; 24] {
@@ -669,7 +682,6 @@ pub(crate) fn parse_sap_setup_response_body(resp_bytes: &[u8]) -> Result<Vec<u8>
 
 /// Fetch SAP setup certificate from Apple
 pub fn fetch_sap_setup_cert() -> Result<Vec<u8>> {
-    let url = "https://s.mzstatic.com/sap/setup.crt";
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
         .connect_timeout(std::time::Duration::from_secs(30))
@@ -677,9 +689,9 @@ pub fn fetch_sap_setup_cert() -> Result<Vec<u8>> {
         .build()
         .context("Failed to build HTTP client")?;
     let resp = client
-        .get(url)
+        .get(SAP_SETUP_CERT_URL)
         .send()
-        .with_context(|| format!("Failed to fetch {}", url))?;
+        .with_context(|| format!("Failed to fetch {}", SAP_SETUP_CERT_URL))?;
     if !resp.status().is_success() {
         bail!("Certificate fetch failed: HTTP {}", resp.status());
     }
@@ -689,7 +701,6 @@ pub fn fetch_sap_setup_cert() -> Result<Vec<u8>> {
 
 /// POST SAP setup exchange data to Apple server, return server response
 pub fn post_sap_setup(client_data: &[u8]) -> Result<Vec<u8>> {
-    let url = "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/signSapSetup";
     let plist_body = encode_sap_setup_request_body(client_data)?;
 
     let client = reqwest::blocking::Client::builder()
@@ -699,17 +710,17 @@ pub fn post_sap_setup(client_data: &[u8]) -> Result<Vec<u8>> {
         .build()
         .context("Failed to build HTTP client")?;
     let resp = client
-        .post(url)
+        .post(SAP_SETUP_POST_URL)
         .header("Content-Type", "application/x-plist")
         .body(plist_body)
         .send()
-        .with_context(|| format!("Failed to POST to {}", url))?;
+        .with_context(|| format!("Failed to POST to {}", SAP_SETUP_POST_URL))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().unwrap_or_default();
         bail!(
-            "SAP setup POST failed: HTTP {} — {}",
+            "SAP setup POST failed: HTTP {} - {}",
             status,
             if body.len() <= 500 {
                 &body
@@ -723,7 +734,7 @@ pub fn post_sap_setup(client_data: &[u8]) -> Result<Vec<u8>> {
     parse_sap_setup_response_body(&resp_bytes)
 }
 
-// ── SapSession: high-level SAP session management ──
+// -- SapSession: high-level SAP session management --
 
 /// RAII guard that teardowns a SAP context on drop unless defused.
 struct CtxGuard {
@@ -750,7 +761,7 @@ impl CtxGuard {
 impl Drop for CtxGuard {
     fn drop(&mut self) {
         if self.active && self.ctx != 0 {
-            eprintln!("[sap] CtxGuard: teardown leaked ctx={:#x}", self.ctx);
+            sap_trace!("[sap] CtxGuard: teardown leaked ctx={:#x}", self.ctx);
             unsafe { call_sap_teardown_cpp(self.teardown_addr, self.ctx) };
         }
     }
@@ -770,17 +781,17 @@ pub struct SapSession {
 }
 
 impl SapSession {
-    /// Full establish: load .so → bootstrap → Init → Exchange R1 → POST → Exchange R2
+    /// Full establish: load .so -> bootstrap -> Init -> Exchange R1 -> POST -> Exchange R2
     pub fn establish(so_path: &Path, lib_dir: &Path) -> Result<Self> {
         #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
         bail!("SAP session only supports aarch64/x86_64 hosts");
 
         // Phase A: Load libraries and bootstrap
-        eprintln!("[sap] Loading {}...", so_path.display());
+        sap_trace!("[sap] Loading {}...", so_path.display());
         let ssc = StoreServicesCore::load(so_path, lib_dir)?;
 
         let rc = ssc.bootstrap(lib_dir)?;
-        eprintln!("[sap] bootstrap => {}", rc);
+        sap_trace!("[sap] bootstrap => {}", rc);
 
         install_wx_signal_handler();
 
@@ -804,16 +815,19 @@ impl SapSession {
             )
         })?;
 
-        eprintln!(
+        sap_trace!(
             "[sap] Symbols resolved: Init={:#x} Exchange={:#x} Sign={:#x} Teardown={:#x}",
-            sap_init_addr, sap_exchange_addr, sap_sign_addr, sap_teardown_addr
+            sap_init_addr,
+            sap_exchange_addr,
+            sap_sign_addr,
+            sap_teardown_addr
         );
 
         // Phase C: Construct FairPlayHwInfo
         let hw_id = get_hardware_id();
         let hwinfo = build_hwinfo_from_id(&hw_id);
         let id_len = hw_id.len().min(20) as u32;
-        eprintln!(
+        sap_trace!(
             "[sap] FairPlayHwInfo: id_len={}, id={:02x?}",
             id_len,
             &hwinfo[4..4 + id_len as usize]
@@ -823,7 +837,7 @@ impl SapSession {
         let mut ctx: u64 = 0;
         let init_rc =
             unsafe { call_sap_init_cpp(sap_init_addr, &mut ctx as *mut u64, hwinfo.as_ptr()) };
-        eprintln!("[sap] FairPlaySAPInit => rc={}, ctx={:#x}", init_rc, ctx);
+        sap_trace!("[sap] FairPlaySAPInit => rc={}, ctx={:#x}", init_rc, ctx);
         if init_rc != 0 {
             bail!("FairPlaySAPInit failed with rc={}", init_rc);
         }
@@ -835,9 +849,9 @@ impl SapSession {
         let mut ctx_guard = CtxGuard::new(sap_teardown_addr, ctx);
 
         // Phase E: Fetch SAP setup certificate
-        eprintln!("[sap] Fetching setup certificate...");
+        sap_trace!("[sap] Fetching setup certificate...");
         let cert_bytes = fetch_sap_setup_cert()?;
-        eprintln!("[sap] Certificate fetched: {} bytes", cert_bytes.len());
+        sap_trace!("[sap] Certificate fetched: {} bytes", cert_bytes.len());
 
         // Phase F: FairPlaySAPExchange round 1
         let version = DEFAULT_SAP_VERSION;
@@ -858,9 +872,11 @@ impl SapSession {
                 &mut rc1,
             )
         };
-        eprintln!(
+        sap_trace!(
             "[sap] FairPlaySAPExchange round 1 => ret={}, rc={}, out_len={}",
-            exchange1_ret, rc1, out_len
+            exchange1_ret,
+            rc1,
+            out_len
         );
         if exchange1_ret != 0 {
             bail!(
@@ -880,12 +896,12 @@ impl SapSession {
         } else {
             bail!("FairPlaySAPExchange round 1 returned empty output");
         };
-        eprintln!("[sap] Exchange round 1 output: {} bytes", client_data.len());
+        sap_trace!("[sap] Exchange round 1 output: {} bytes", client_data.len());
 
         // Phase G: POST exchange data to Apple server
-        eprintln!("[sap] Posting SAP setup to Apple server...");
+        sap_trace!("[sap] Posting SAP setup to Apple server...");
         let server_data = post_sap_setup(&client_data)?;
-        eprintln!("[sap] Server response: {} bytes", server_data.len());
+        sap_trace!("[sap] Server response: {} bytes", server_data.len());
 
         // Phase H: FairPlaySAPExchange round 2
         let mut out_ptr2: *mut u8 = std::ptr::null_mut();
@@ -905,9 +921,10 @@ impl SapSession {
                 &mut rc2,
             )
         };
-        eprintln!(
+        sap_trace!(
             "[sap] FairPlaySAPExchange round 2 => ret={}, rc={}",
-            exchange2_ret, rc2
+            exchange2_ret,
+            rc2
         );
         if exchange2_ret != 0 {
             bail!(
@@ -923,9 +940,9 @@ impl SapSession {
         if !out_ptr2.is_null() {
             unsafe { libc::free(out_ptr2 as *mut libc::c_void) };
         }
-        eprintln!("[sap] SAP session established successfully!");
+        sap_trace!("[sap] SAP session established successfully!");
 
-        // Success — defuse the guard so ctx is not torn down
+        // Success - defuse the guard so ctx is not torn down
         let ctx = ctx_guard.defuse();
 
         Ok(Self {
@@ -983,7 +1000,7 @@ impl SapSession {
     /// Refresh SAP session: establish new context first, teardown old only on success.
     /// If the new handshake fails, the old session remains usable.
     pub fn refresh(&mut self) -> Result<()> {
-        eprintln!(
+        sap_trace!(
             "[sap] Refreshing session (age: {:.1}s)...",
             self.age().as_secs_f64()
         );
@@ -998,9 +1015,10 @@ impl SapSession {
                 self.hwinfo.as_ptr(),
             )
         };
-        eprintln!(
+        sap_trace!(
             "[sap] FairPlaySAPInit => rc={}, ctx={:#x}",
-            init_rc, new_ctx
+            init_rc,
+            new_ctx
         );
         if init_rc != 0 {
             bail!(
@@ -1039,9 +1057,11 @@ impl SapSession {
                 &mut rc1,
             )
         };
-        eprintln!(
+        sap_trace!(
             "[sap] Exchange round 1 => ret={}, rc={}, out_len={}",
-            ex1_ret, rc1, out_len
+            ex1_ret,
+            rc1,
+            out_len
         );
         if ex1_ret != 0 || rc1 != 1 {
             unsafe { call_sap_teardown_cpp(self.sap_teardown_addr, new_ctx) };
@@ -1088,7 +1108,7 @@ impl SapSession {
                 &mut rc2,
             )
         };
-        eprintln!("[sap] Exchange round 2 => ret={}, rc={}", ex2_ret, rc2);
+        sap_trace!("[sap] Exchange round 2 => ret={}, rc={}", ex2_ret, rc2);
         if ex2_ret != 0 || rc2 != 0 {
             unsafe { call_sap_teardown_cpp(self.sap_teardown_addr, new_ctx) };
             bail!(
@@ -1101,14 +1121,14 @@ impl SapSession {
             unsafe { libc::free(out_ptr2 as *mut libc::c_void) };
         }
 
-        // New session fully established — now teardown old
+        // New session fully established - now teardown old
         if old_ctx != 0 {
             let td_ret = unsafe { call_sap_teardown_cpp(self.sap_teardown_addr, old_ctx) };
-            eprintln!("[sap] Old session teardown => ret={}", td_ret);
+            sap_trace!("[sap] Old session teardown => ret={}", td_ret);
         }
         self.ctx = new_ctx;
         self.established_at = std::time::Instant::now();
-        eprintln!("[sap] Session refreshed successfully");
+        sap_trace!("[sap] Session refreshed successfully");
         Ok(())
     }
 }
@@ -1117,7 +1137,7 @@ impl Drop for SapSession {
     fn drop(&mut self) {
         if self.ctx != 0 {
             let ret = unsafe { call_sap_teardown_cpp(self.sap_teardown_addr, self.ctx) };
-            eprintln!("[sap] FairPlaySAPTeardown (drop) => ret={}", ret);
+            sap_trace!("[sap] FairPlaySAPTeardown (drop) => ret={}", ret);
         }
     }
 }

@@ -14,7 +14,7 @@ plist-macros = { path = "plist-macros" }
 xcode = { path = "xcode" }
 
 plist = "1"
-reqwest = { version = "0.13", features = ["rustls", "query", "gzip", "blocking"] }
+reqwest = { version = "0.13", features = ["rustls", "query", "gzip"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 

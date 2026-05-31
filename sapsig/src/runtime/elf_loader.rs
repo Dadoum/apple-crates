@@ -30,7 +30,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::hooks::{GLOBAL_HOOKS, resolve_dynamic_symbol_fallback};
 
-// ── W^X conflict page tracking (macOS 16KB pages) ──
+// -- W^X conflict page tracking (macOS 16KB pages) --
 // On macOS ARM64, pages are 16KB but ELF segments use 4KB alignment.
 // When an EXEC segment and a RW segment share a 16KB page, we can't satisfy
 // both due to W^X policy. We track these "conflict pages" and use a SIGBUS
@@ -66,7 +66,7 @@ mod wx_conflict {
     }
 
     /// Toggle a conflict page's permissions. Returns true if the page was found.
-    /// Called from the signal handler — must be async-signal-safe (no allocation).
+    /// Called from the signal handler - must be async-signal-safe (no allocation).
     /// We use try_lock to avoid deadlock if the signal fires while holding the lock.
     pub fn toggle(fault_addr: usize, need_exec: bool) -> bool {
         let page_size = super::host_page_size();
@@ -118,13 +118,15 @@ pub fn install_wx_signal_handler() {
         libc::sigemptyset(&mut sa.sa_mask);
         libc::sigaction(libc::SIGBUS, &sa, std::ptr::null_mut());
     }
-    eprintln!(
-        "[elf_loader] W^X signal handler installed for {} conflict pages",
-        {
-            let reg = wx_conflict::registry_lock();
-            reg.len()
-        }
-    );
+    if init_trace_enabled() {
+        eprintln!(
+            "[elf_loader] W^X signal handler installed for {} conflict pages",
+            {
+                let reg = wx_conflict::registry_lock();
+                reg.len()
+            }
+        );
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -137,7 +139,7 @@ unsafe extern "C" fn wx_sigbus_handler(
     ucontext: *mut libc::c_void,
 ) {
     if sig != libc::SIGBUS || info.is_null() || ucontext.is_null() {
-        // Not our signal — re-raise
+        // Not our signal - re-raise
         libc::signal(libc::SIGBUS, libc::SIG_DFL);
         libc::raise(libc::SIGBUS);
         return;
@@ -153,11 +155,11 @@ unsafe extern "C" fn wx_sigbus_handler(
     let need_exec = fault_addr == pc; // execute fault: si_addr == PC
 
     if wx_conflict::toggle(fault_addr, need_exec) {
-        // Permission toggled — return to retry the faulting instruction
+        // Permission toggled - return to retry the faulting instruction
         return;
     }
 
-    // Not a conflict page — re-raise as default
+    // Not a conflict page - re-raise as default
     libc::signal(libc::SIGBUS, libc::SIG_DFL);
     libc::raise(libc::SIGBUS);
 }
@@ -166,7 +168,7 @@ fn log_unresolved_once(symbol: &str) {
     static UNRESOLVED_SYMBOLS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let unresolved = UNRESOLVED_SYMBOLS.get_or_init(|| Mutex::new(HashSet::new()));
     let mut unresolved = unresolved.lock().unwrap();
-    if unresolved.insert(symbol.to_string()) {
+    if unresolved.insert(symbol.to_string()) && init_trace_enabled() {
         eprintln!("Warning: Unresolved symbol: {}", symbol);
     }
 }
@@ -342,10 +344,10 @@ pub fn clear_registered_libraries() {
 pub fn resolve_symbol_from_registered_libraries(name: &str) -> Option<usize> {
     let registry = loaded_library_registry().lock().unwrap();
     for handle in registry.load_order.iter().rev() {
-        if let Some(lib) = registry.by_handle.get(handle) {
-            if let Some(&addr) = lib.symbols.get(name) {
-                return Some(addr);
-            }
+        if let Some(lib) = registry.by_handle.get(handle)
+            && let Some(&addr) = lib.symbols.get(name)
+        {
+            return Some(addr);
         }
     }
     None
@@ -369,10 +371,10 @@ pub fn lookup_symbol_in_registered_library(handle: *mut c_void, symbol: &str) ->
 
     if search_all {
         for loaded_handle in registry.load_order.iter().rev() {
-            if let Some(lib) = registry.by_handle.get(loaded_handle) {
-                if let Some(&addr) = lib.symbols.get(symbol) {
-                    return Some(addr);
-                }
+            if let Some(lib) = registry.by_handle.get(loaded_handle)
+                && let Some(&addr) = lib.symbols.get(symbol)
+            {
+                return Some(addr);
             }
         }
         return None;
@@ -443,7 +445,10 @@ pub struct LoadedLibrary {
     symbols: HashMap<String, usize>,
 }
 
+// SAFETY: LoadedLibrary owns an mmap region and immutable symbol metadata after construction.
+// Mutations happen through &mut self during loading, before instances enter shared registries.
 unsafe impl Send for LoadedLibrary {}
+// SAFETY: Shared access only reads base/size/symbols; initialization state is guarded by mutexes.
 unsafe impl Sync for LoadedLibrary {}
 
 impl LoadedLibrary {
@@ -558,24 +563,24 @@ impl LoadedLibrary {
         // Build symbol table
         let mut symbols = HashMap::new();
         for sym in &elf.dynsyms {
-            if sym.st_type() == STT_FUNC && sym.st_value != 0 {
-                if let Some(name) = elf.dynstrtab.get_at(sym.st_name) {
-                    let addr = unsafe { base.add(sym.st_value as usize - base_offset) as usize };
-                    symbols.insert(name.to_string(), addr);
-                }
+            if sym.st_type() == STT_FUNC
+                && sym.st_value != 0
+                && let Some(name) = elf.dynstrtab.get_at(sym.st_name)
+            {
+                let addr = unsafe { base.add(sym.st_value as usize - base_offset) as usize };
+                symbols.insert(name.to_string(), addr);
             }
         }
 
         // Also add non-function symbols that might be needed
         for sym in &elf.dynsyms {
-            if sym.st_value != 0 && sym.st_type() != STT_FUNC {
-                if let Some(name) = elf.dynstrtab.get_at(sym.st_name) {
-                    if !symbols.contains_key(name) {
-                        let addr =
-                            unsafe { base.add(sym.st_value as usize - base_offset) as usize };
-                        symbols.insert(name.to_string(), addr);
-                    }
-                }
+            if sym.st_value != 0
+                && sym.st_type() != STT_FUNC
+                && let Some(name) = elf.dynstrtab.get_at(sym.st_name)
+                && !symbols.contains_key(name)
+            {
+                let addr = unsafe { base.add(sym.st_value as usize - base_offset) as usize };
+                symbols.insert(name.to_string(), addr);
             }
         }
 
@@ -619,7 +624,7 @@ impl LoadedLibrary {
             }
 
             // Detect conflict pages and register them
-            for (&page_off, _) in &page_needs_exec {
+            for &page_off in page_needs_exec.keys() {
                 if page_needs_write.contains_key(&page_off) {
                     let abs_addr = base as usize + page_off;
                     wx_conflict::register(abs_addr, page_size);
@@ -634,8 +639,10 @@ impl LoadedLibrary {
                 let effective_prot = if is_conflict {
                     // Start as RW so init_array code can write to these pages
                     libc::PROT_READ | libc::PROT_WRITE
+                } else if prot == 0 {
+                    libc::PROT_NONE
                 } else {
-                    if prot == 0 { libc::PROT_NONE } else { prot }
+                    prot
                 };
                 unsafe {
                     if libc::mprotect(abs_addr as *mut libc::c_void, page_size, effective_prot) != 0
@@ -708,18 +715,17 @@ impl LoadedLibrary {
             init_fn_vaddr.and_then(|vaddr| self.normalize_initializer_addr(vaddr, base_offset));
         let mut init_array = Vec::new();
 
-        if let Some(init_array_vaddr) = init_array_vaddr {
-            if let Some(init_array_host) = self.virtual_addr_to_host(init_array_vaddr, base_offset)
-            {
-                let count = init_array_size / std::mem::size_of::<usize>();
-                for index in 0..count {
-                    let slot_ptr = (init_array_host as *const u8)
-                        .wrapping_add(index * std::mem::size_of::<usize>())
-                        as *const usize;
-                    let entry = unsafe { std::ptr::read_unaligned(slot_ptr) };
-                    if let Some(addr) = self.normalize_initializer_addr(entry, base_offset) {
-                        init_array.push(addr);
-                    }
+        if let Some(init_array_vaddr) = init_array_vaddr
+            && let Some(init_array_host) = self.virtual_addr_to_host(init_array_vaddr, base_offset)
+        {
+            let count = init_array_size / std::mem::size_of::<usize>();
+            for index in 0..count {
+                let slot_ptr = (init_array_host as *const u8)
+                    .wrapping_add(index * std::mem::size_of::<usize>())
+                    as *const usize;
+                let entry = unsafe { std::ptr::read_unaligned(slot_ptr) };
+                if let Some(addr) = self.normalize_initializer_addr(entry, base_offset) {
+                    init_array.push(addr);
                 }
             }
         }
@@ -776,6 +782,7 @@ impl LoadedLibrary {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_relocation(
         &mut self,
         elf: &Elf,

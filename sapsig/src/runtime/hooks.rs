@@ -681,7 +681,7 @@ fn hook_trace(message: &str) {
 /// Android's pthread_once_t is a 4-byte int (0=pending, 1=running, 2=done),
 /// while macOS expects an 8-byte struct with different alignment requirements.
 /// The macOS pthread_once uses `ldapr x8, [x20]` which requires 8-byte alignment,
-/// but Android's 4-byte once_t may only be 4-byte aligned → EXC_BAD_ACCESS.
+/// but Android's 4-byte once_t may only be 4-byte aligned -> EXC_BAD_ACCESS.
 extern "C" fn android_pthread_once(once_control: *mut i32, init_routine: extern "C" fn()) -> i32 {
     use std::sync::atomic::{AtomicI32, Ordering};
     if once_control.is_null() {
@@ -695,10 +695,10 @@ extern "C" fn android_pthread_once(once_control: *mut i32, init_routine: extern 
         return 0;
     }
 
-    // Try to claim the init slot (0 → 1)
+    // Try to claim the init slot (0 -> 1)
     match atom.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire) {
         Ok(_) => {
-            // We won the race — run the init routine
+            // We won the race - run the init routine
             init_routine();
             atom.store(2, Ordering::Release);
             0
@@ -1181,7 +1181,7 @@ fn base64_encode_bytes(input: &[u8]) -> Vec<u8> {
         return Vec::new();
     }
 
-    let mut out = Vec::with_capacity(((input.len() + 2) / 3) * 4);
+    let mut out = Vec::with_capacity(input.len().div_ceil(3) * 4);
     let mut i = 0usize;
     while i + 3 <= input.len() {
         let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8) | (input[i + 2] as u32);
@@ -1396,14 +1396,7 @@ extern "C" fn cf_release_stub(value: *const c_void) {
     }
     unsafe {
         let tag = std::ptr::read_unaligned(value as *const u64);
-        if tag == CF_DATA_TAG {
-            let raw = value as *mut u8;
-            let ptr = std::ptr::read_unaligned(raw.add(16) as *const *mut u8);
-            if !ptr.is_null() {
-                libc::free(ptr as *mut c_void);
-            }
-            libc::free(value as *mut c_void);
-        } else if tag == CF_STRING_TAG {
+        if tag == CF_DATA_TAG || tag == CF_STRING_TAG {
             let raw = value as *mut u8;
             let ptr = std::ptr::read_unaligned(raw.add(16) as *const *mut u8);
             if !ptr.is_null() {
@@ -1423,10 +1416,7 @@ fn corefoundation_symbol_kind(name: &str) -> Option<CfStubKind> {
 }
 
 fn is_corefoundation_constant(name: &str) -> bool {
-    name.starts_with("kCF")
-        || COREFOUNDATION_CONSTANTS
-            .iter()
-            .any(|symbol| *symbol == name)
+    name.starts_with("kCF") || COREFOUNDATION_CONSTANTS.contains(&name)
 }
 
 #[repr(C)]
@@ -1743,7 +1733,7 @@ extern "C" fn arc4random_buf(buf: *mut u8, len: usize) {
         return;
     }
     let slice = unsafe { std::slice::from_raw_parts_mut(buf, len) };
-    rand::thread_rng().fill(slice);
+    rand::rng().fill(slice);
 }
 
 // Android system property stub
@@ -1825,14 +1815,14 @@ extern "C" fn hook_dlopen(filename: *const c_char, flags: i32) -> *mut libc::c_v
     } else {
         unsafe { CStr::from_ptr(filename) }.to_str().unwrap_or("")
     };
-    if !path.is_empty() {
-        if let Some(handle) = lookup_registered_library_handle(path) {
-            let init_ok = ensure_registered_library_initialized(handle);
-            if hook_trace_enabled() {
-                eprintln!("[hook] dlopen(preloaded) {path} => {handle:p} (init_ok={init_ok})");
-            }
-            return handle;
+    if !path.is_empty()
+        && let Some(handle) = lookup_registered_library_handle(path)
+    {
+        let init_ok = ensure_registered_library_initialized(handle);
+        if hook_trace_enabled() {
+            eprintln!("[hook] dlopen(preloaded) {path} => {handle:p} (init_ok={init_ok})");
         }
+        return handle;
     }
     unsafe { libc::dlopen(filename, flags) }
 }
@@ -2052,17 +2042,19 @@ extern "C" fn cxa_allocate_exception(_size: usize) -> *mut libc::c_void {
     std::ptr::null_mut()
 }
 
+// C++ exceptions cannot unwind through these Rust hook frames. Abort instead of
+// letting foreign unwinding corrupt host state.
 extern "C" fn cxa_throw(
     _exception: *mut libc::c_void,
     _type: *mut libc::c_void,
     _destructor: *mut libc::c_void,
 ) {
-    eprintln!("[hook] FATAL: __cxa_throw called — native C++ exception thrown, aborting");
+    eprintln!("[hook] FATAL: __cxa_throw called - native C++ exception thrown, aborting");
     std::process::abort();
 }
 
 extern "C" fn cxa_rethrow() {
-    eprintln!("[hook] FATAL: __cxa_rethrow called — native C++ exception rethrown, aborting");
+    eprintln!("[hook] FATAL: __cxa_rethrow called - native C++ exception rethrown, aborting");
     std::process::abort();
 }
 
@@ -2071,7 +2063,7 @@ extern "C" fn gxx_personality_v0() -> i32 {
 }
 
 extern "C" fn unwind_resume(_exception: *mut libc::c_void) {
-    eprintln!("[hook] FATAL: _Unwind_Resume called — unhandled C++ exception, aborting");
+    eprintln!("[hook] FATAL: _Unwind_Resume called - unhandled C++ exception, aborting");
     std::process::abort();
 }
 
