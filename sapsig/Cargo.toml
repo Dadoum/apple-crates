@@ -1,0 +1,15 @@
+[package]
+name = "sapsig"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+goblin = "0.10"
+lazy_static = "1"
+libc = "0.2"
+plist.workspace = true
+rand = "0.9"
+reqwest = { workspace = true, features = ["blocking"] }
+thiserror.workspace = true
