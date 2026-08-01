@@ -63,9 +63,18 @@ impl<'a> MachOSigningConfig<'a> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 pub fn sign_macho_file(path: &Path, config: &MachOSigningConfig<'_>) -> Result<()> {
     let original = read_file_bytes(path)?;
     let signed = sign_macho_data(path, original.as_slice(), config)?;
+    fs::write(path, signed).map_err(|source| CodeSignError::io(path, source))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub fn sign_macho_file(path: &Path, config: &MachOSigningConfig<'_>) -> Result<()> {
+    let original = fs::read(path).map_err(|source| CodeSignError::io(path, source))?;
+    let signed = sign_macho_owned(path, original, config)?;
     fs::write(path, signed).map_err(|source| CodeSignError::io(path, source))?;
     Ok(())
 }
