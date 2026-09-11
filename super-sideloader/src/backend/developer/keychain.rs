@@ -10,7 +10,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const KEYCHAIN_SESSION_VERSION: u32 = 1;
-const KEYRING_SERVICE: &str = "com.Dadoum.Super-Sideloader";
+const KEYRING_SERVICE: &str = "zone.dadoum.SuperSideloader";
 const TOKEN_EXPIRY_GRACE_MILLIS: u64 = 5 * 60 * 1000;
 
 type KeychainResult<T> = Result<T, String>;

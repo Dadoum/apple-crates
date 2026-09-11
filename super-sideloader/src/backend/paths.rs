@@ -4,9 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-const QUALIFIER: &str = "com";
-const ORGANIZATION: &str = "Dadoum";
-const APPLICATION: &str = "Super Sideloader";
+const QUALIFIER: &str = "zone";
+const ORGANIZATION: &str = "dadoum";
+const APPLICATION: &str = "SuperSideloader";
 
 pub(crate) fn app_data_dir() -> Option<PathBuf> {
     project_dirs().map(|dirs| dirs.data_dir().to_path_buf())

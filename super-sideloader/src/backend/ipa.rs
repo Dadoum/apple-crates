@@ -457,24 +457,12 @@ async fn sign_ipa_async(
     request: IpaSigningRequest,
     mut progress: impl FnMut(IpaSigningProgress) + Send,
 ) -> BackendResult<SigningArtifact> {
-    let work_parent = app_data_dir()
-        .ok_or_else(|| {
-            BackendError::Unsupported(
-                "The application data folder is not available for IPA signing.".to_string(),
-            )
-        })?
-        .join("signing");
-    fs::create_dir_all(&work_parent).map_err(|source| BackendError::Io {
-        action: "Create IPA signing work folder",
-        path: work_parent.clone(),
-        source,
-    })?;
     let work_dir = TempBuilder::new()
-        .prefix("sign-")
-        .tempdir_in(&work_parent)
+        .prefix("super-sideloader-sign-")
+        .tempdir()
         .map_err(|source| BackendError::Io {
             action: "Create temporary IPA signing folder",
-            path: work_parent,
+            path: std::env::temp_dir(),
             source,
         })?;
 
