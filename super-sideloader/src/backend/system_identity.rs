@@ -1,6 +1,10 @@
 use crate::domain::MachineIdentity;
 use std::env;
 
+#[cfg(target_os = "windows")]
+#[path = "windows_system.rs"]
+mod windows_system;
+
 pub(crate) fn machine_identity() -> MachineIdentity {
     platform_machine_identity().unwrap_or_else(fallback_machine_identity)
 }
@@ -36,7 +40,25 @@ fn platform_machine_identity() -> Option<MachineIdentity> {
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_machine_identity() -> MachineIdentity {
+    MachineIdentity {
+        machine_name: "PC".to_string(),
+        os_name: "Windows".to_string(),
+        os_version: windows_system::information().unwrap_or_else(|error| {
+            log::warn!("Failed to read Windows system information: {error}");
+            "Unknown".into()
+        }),
+        machine_id: library_coreadi::windows::device_identifier(),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn platform_machine_identity() -> Option<MachineIdentity> {
+    Some(windows_machine_identity())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn platform_machine_identity() -> Option<MachineIdentity> {
     None
 }

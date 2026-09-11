@@ -5,16 +5,12 @@ use crate::domain::{
     AdiRepairAction, MachineIdentity,
 };
 use adi::core_adi::CoreADIADIProxy;
-#[cfg(target_os = "windows")]
-use adi::core_adi::{CoreADIParameters, CoreADIProxy};
 use adi::ADIProxy;
 use async_zip::tokio::read::fs::ZipFileReader;
 use futures_lite::io::AsyncReadExt;
-use grandslam::bundle_information::BundleInformation;
+use grandslam::bundle_information::{BundleInformation, AKD_BUNDLE_INFORMATION};
 use grandslam::device::Device;
 use grandslam::http_session::AnisetteHTTPSession;
-#[cfg(target_os = "windows")]
-use ouroboros::self_referencing;
 use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -109,8 +105,8 @@ async fn provision_adi_async(
 ) -> BackendResult<()> {
     let proxy = selected_adi_proxy(kind, &android_adi_identifier)?;
     let http_session = grandslam::http_session(
-        grandslam_device(&machine_identity),
-        XCODE_BUNDLE_INFORMATION,
+        grandslam_device(&machine_identity, kind),
+        AKD_BUNDLE_INFORMATION,
     )
     .await
     .map_err(|error| {
@@ -125,7 +121,18 @@ async fn provision_adi_async(
         .map_err(|error| BackendError::Adi(format!("Failed to provision ADI: {error}")))
 }
 
-pub(crate) fn grandslam_device(machine_identity: &MachineIdentity) -> Device {
+pub(crate) fn grandslam_device(machine_identity: &MachineIdentity, kind: AdiBackendKind) -> Device {
+    #[cfg(target_os = "windows")]
+    if kind == AdiBackendKind::WindowsCoreAdi {
+        let identity = crate::backend::system_identity::windows_machine_identity();
+        return Device {
+            device_model: identity.machine_name,
+            operating_system_information: format!("{}; {}", identity.os_name, identity.os_version),
+            device_uuid: identity.machine_id,
+        };
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = kind;
     Device {
         device_model: machine_identity.machine_name.to_string(),
         operating_system_information: format!(
@@ -163,55 +170,21 @@ fn system_adi_proxy() -> BackendResult<Box<dyn ADIProxy>> {
 }
 
 #[cfg(target_os = "windows")]
-#[self_referencing]
-struct WindowsCoreADIProxy {
-    library: dlopen2::symbor::Library,
-
-    #[borrows(library)]
-    #[covariant]
-    proxy: library_coreadi::LibraryCoreADIProxy<'this>,
-}
-
-#[cfg(target_os = "windows")]
-impl WindowsCoreADIProxy {
-    fn open(path: PathBuf) -> BackendResult<Self> {
-        let library = dlopen2::symbor::Library::open(path.as_os_str())
-            .map_err(|error| BackendError::Adi(format!("Failed to load CoreADI.dll: {error}")))?;
-        let proxy = WindowsCoreADIProxyTryBuilder {
-            library,
-            proxy_builder: |library| {
-                library_coreadi::LibraryCoreADIProxy::new(library).map_err(|error| {
-                    BackendError::Adi(format!("CoreADI entry point could not be loaded: {error}"))
-                })
-            },
-        }
-        .try_build()?;
-
-        proxy
-            .with_proxy(|proxy| {
-                CoreADIADIProxy::initialize(proxy).map_err(|error| {
-                    BackendError::Adi(format!("CoreADI initialization failed: {error}"))
-                })
-            })
-            .map(|()| proxy)
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl CoreADIProxy for WindowsCoreADIProxy {
-    unsafe fn dispatch(&self, function_code: u32, parameters: *const CoreADIParameters) -> i32 {
-        self.with_proxy(|proxy| unsafe { proxy.dispatch(function_code, parameters) })
-    }
-}
-
-#[cfg(target_os = "windows")]
 fn windows_coreadi_proxy() -> BackendResult<Box<dyn ADIProxy>> {
     let library_path = find_windows_coreadi_library().ok_or_else(|| {
         BackendError::Adi(
-            "CoreADI.dll was not found in the usual iTunes or iCloud folders.".to_string(),
+            "A compatible CoreADI library was not found in the installed iTunes or iCloud folders."
+                .into(),
         )
     })?;
-    Ok(Box::new(WindowsCoreADIProxy::open(library_path)?))
+    let proxy =
+        library_coreadi::windows::WindowsCoreADIProxy::open(&library_path).map_err(|error| {
+            BackendError::Adi(format!(
+                "Failed to load {}: {error}",
+                library_path.display()
+            ))
+        })?;
+    Ok(Box::new(proxy))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -321,6 +294,11 @@ fn windows_coreadi_backend() -> AdiBackend {
             AdiBackendDetail {
                 label: "Identity storage".into(),
                 value: "Apple managed".into(),
+            },
+            #[cfg(target_os = "windows")]
+            AdiBackendDetail {
+                label: "Device identifier".into(),
+                value: library_coreadi::windows::device_identifier(),
             },
         ],
         provisioning_state: AdiProvisioningState::Unknown,
@@ -539,23 +517,22 @@ async fn publish_partial_file(
 pub(crate) async fn download_and_install_android_coreadi(
     mut progress: impl FnMut(AndroidCoreAdiInstallEvent) + Send + 'static,
 ) -> BackendResult<PathBuf> {
-    backend_runtime::run_send("CoreADI install", async move {
-        let apk_path = download_android_coreadi_apk(|download| {
+    backend_runtime::run_send_with("CoreADI install", move || async move {
+        let apk_path = Box::pin(download_android_coreadi_apk(|download| {
             progress(AndroidCoreAdiInstallEvent::Downloading(download));
-        })
+        }))
         .await?;
         progress(AndroidCoreAdiInstallEvent::Installing);
-        install_android_coreadi_from_apk_async(apk_path).await
+        Box::pin(install_android_coreadi_from_apk_async(apk_path)).await
     })
     .await?
 }
 
 #[allow(dead_code)]
 pub(crate) async fn install_android_coreadi_from_apk(apk_path: PathBuf) -> BackendResult<PathBuf> {
-    backend_runtime::run_send(
-        "CoreADI APK reader",
-        install_android_coreadi_from_apk_async(apk_path),
-    )
+    backend_runtime::run_send_with("CoreADI APK reader", move || {
+        Box::pin(install_android_coreadi_from_apk_async(apk_path))
+    })
     .await?
 }
 
@@ -611,7 +588,8 @@ async fn install_android_coreadi_from_apk_async(apk_path: PathBuf) -> BackendRes
                 source: error,
             })?;
     let mut written_bytes = 0u64;
-    let mut buffer = [0u8; 64 * 1024];
+    // Keep the extraction buffer out of the async state machine on the caller stack.
+    let mut buffer = vec![0u8; 64 * 1024];
     loop {
         let read = entry_reader.read(&mut buffer).await.map_err(|error| {
             BackendError::Zip(format!("Failed to extract CoreADI from APK: {error}"))
@@ -693,47 +671,25 @@ fn c_string_from_path(path: &Path) -> BackendResult<CString> {
 }
 
 fn find_windows_coreadi_library() -> Option<PathBuf> {
-    if !cfg!(target_os = "windows") {
-        return None;
+    #[cfg(target_os = "windows")]
+    {
+        library_coreadi::windows::find_library()
     }
-
-    windows_coreadi_candidates()
-        .into_iter()
-        .find(|path| path.exists())
-}
-
-fn windows_coreadi_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    for env_var in ["ProgramFiles", "ProgramFiles(x86)"] {
-        if let Some(root) = std::env::var_os(env_var) {
-            let root = PathBuf::from(root);
-            candidates.push(
-                root.join("Common Files")
-                    .join("Apple")
-                    .join("Apple Application Support")
-                    .join("CoreADI.dll"),
-            );
-            candidates.push(
-                root.join("Apple")
-                    .join("Apple Application Support")
-                    .join("CoreADI.dll"),
-            );
-        }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
     }
-    if let Some(root) = std::env::var_os("CommonProgramFiles") {
-        candidates.push(
-            PathBuf::from(root)
-                .join("Apple")
-                .join("Apple Application Support")
-                .join("CoreADI.dll"),
-        );
-    }
-    candidates
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_future_does_not_embed_the_extraction_buffer() {
+        let future = download_and_install_android_coreadi(|_| {});
+        assert!(std::mem::size_of_val(&future) < 16 * 1024);
+    }
 
     #[test]
     fn available_backends_return_domain_backends_and_filter_unavailable() {

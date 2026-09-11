@@ -17,9 +17,9 @@ impl Device {
             "<{}> <{}> <{}/{} ({}/{})>",
             self.device_model,
             self.operating_system_information,
-            authentication_framework.bundle_name,
+            authentication_framework.bundle_identifier,
             authentication_framework.bundle_version,
-            application_information.bundle_name,
+            application_information.bundle_identifier,
             application_information.bundle_version,
         )
     }

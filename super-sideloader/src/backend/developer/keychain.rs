@@ -1,3 +1,7 @@
+#[cfg(target_os = "windows")]
+#[path = "windows_session_store.rs"]
+mod windows_session_store;
+
 use crate::backend::{BackendError, BackendResult};
 use grandslam::{AuthToken, Token};
 use serde::{Deserialize, Serialize};
@@ -75,6 +79,9 @@ pub(crate) fn save_keychain_session(
         return Ok(());
     }
 
+    #[cfg(target_os = "windows")]
+    windows_session_store::save(account_id, &contents).map_err(BackendError::Keychain)?;
+    #[cfg(not(target_os = "windows"))]
     keyring_entry(account_id)
         .map_err(BackendError::Keychain)?
         .set_password(&contents)
@@ -90,6 +97,11 @@ pub(crate) fn save_keychain_session(
 pub(crate) fn load_keychain_session(
     account_id: &str,
 ) -> BackendResult<Option<DeveloperAccountKeychainSession>> {
+    #[cfg(target_os = "windows")]
+    {
+        load_keychain_session_once(account_id, || windows_session_store::load(account_id))
+    }
+    #[cfg(not(target_os = "windows"))]
     load_keychain_session_once(account_id, || {
         let entry = keyring_entry(account_id)?;
         match entry.get_password() {
@@ -138,6 +150,11 @@ pub(crate) fn delete_keychain_session(account_id: &str) -> BackendResult<()> {
     let mut cache = lock_session_cache()?;
     cache.remove(account_id);
 
+    #[cfg(target_os = "windows")]
+    {
+        windows_session_store::delete(account_id).map_err(BackendError::Keychain)
+    }
+    #[cfg(not(target_os = "windows"))]
     match keyring_entry(account_id)
         .map_err(BackendError::Keychain)?
         .delete_credential()

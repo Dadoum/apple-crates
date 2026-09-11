@@ -16,12 +16,12 @@ pub struct stat {
     pub st_size: libc::c_longlong,
     pub st_blksize: blksize_t,
     pub st_blocks: libc::c_ulonglong,
-    pub st_atime: libc::c_long,
-    pub st_atime_nsec: libc::c_long,
-    pub st_mtime: libc::c_long,
-    pub st_mtime_nsec: libc::c_long,
-    pub st_ctime: libc::c_long,
-    pub st_ctime_nsec: libc::c_long,
+    pub st_atime: isize,
+    pub st_atime_nsec: isize,
+    pub st_mtime: isize,
+    pub st_mtime_nsec: isize,
+    pub st_ctime: isize,
+    pub st_ctime_nsec: isize,
     pub st_ino: libc::c_ulonglong,
 }
 
@@ -35,17 +35,17 @@ pub struct stat {
     pub st_uid: uid_t,
     pub st_gid: gid_t,
     pub st_rdev: dev_t,
-    pub __pad1: libc::c_ulong,
+    pub __pad1: usize,
     pub st_size: off64_t,
     pub st_blksize: libc::c_int,
     pub __pad2: libc::c_int,
-    pub st_blocks: libc::c_long,
+    pub st_blocks: isize,
     pub st_atime: time_t,
-    pub st_atime_nsec: libc::c_long,
+    pub st_atime_nsec: isize,
     pub st_mtime: time_t,
-    pub st_mtime_nsec: libc::c_long,
+    pub st_mtime_nsec: isize,
     pub st_ctime: time_t,
-    pub st_ctime_nsec: libc::c_long,
+    pub st_ctime_nsec: isize,
     pub __unused4: libc::c_uint,
     pub __unused5: libc::c_uint,
 }
@@ -55,21 +55,21 @@ pub struct stat {
 pub struct stat {
     pub st_dev: dev_t,
     pub st_ino: ino_t,
-    pub st_nlink: libc::c_ulong,
+    pub st_nlink: usize,
     pub st_mode: libc::c_uint,
     pub st_uid: uid_t,
     pub st_gid: gid_t,
     pub st_rdev: dev_t,
     pub st_size: off64_t,
-    pub st_blksize: libc::c_long,
-    pub st_blocks: libc::c_long,
-    pub st_atime: libc::c_long,
-    pub st_atime_nsec: libc::c_long,
-    pub st_mtime: libc::c_long,
-    pub st_mtime_nsec: libc::c_long,
-    pub st_ctime: libc::c_long,
-    pub st_ctime_nsec: libc::c_long,
-    pub __unused: [libc::c_long; 3],
+    pub st_blksize: isize,
+    pub st_blocks: isize,
+    pub st_atime: isize,
+    pub st_atime_nsec: isize,
+    pub st_mtime: isize,
+    pub st_mtime_nsec: isize,
+    pub st_ctime: isize,
+    pub st_ctime_nsec: isize,
+    pub __unused: [isize; 3],
 }
 
 pub const O_RDONLY: libc::c_int = 0;
@@ -83,8 +83,8 @@ pub const O_NOFOLLOW: libc::c_int = 0x20000;
 #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
 pub const O_NOFOLLOW: libc::c_int = 0x8000;
 
-pub type dev_t = libc::c_ulong;
-pub type ino_t = libc::c_ulong;
+pub type dev_t = usize;
+pub type ino_t = usize;
 pub type nlink_t = u32;
 pub type uid_t = u32;
 pub type gid_t = u32;
@@ -99,7 +99,7 @@ pub type mode_t = u32;
 #[cfg(target_pointer_width = "32")]
 pub type mode_t = u16;
 
-pub type time_t = libc::c_long;
+pub type time_t = isize;
 
 pub type suseconds_t = i64;
 
@@ -107,4 +107,17 @@ pub type suseconds_t = i64;
 pub struct timeval {
     pub tv_sec: time_t,
     pub tv_usec: suseconds_t,
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+    use super::*;
+    #[test]
+    fn linux_abi_layout_is_independent_of_windows_long_width() {
+        assert_eq!(std::mem::size_of::<stat>(), 144);
+        assert_eq!(std::mem::offset_of!(stat, st_size), 48);
+        assert_eq!(std::mem::offset_of!(stat, st_atime), 72);
+        assert_eq!(std::mem::size_of::<timeval>(), 16);
+        assert_eq!(std::mem::offset_of!(timeval, tv_usec), 8);
+    }
 }

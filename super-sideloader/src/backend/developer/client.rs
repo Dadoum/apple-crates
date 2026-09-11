@@ -32,7 +32,7 @@ where
 {
     let proxy = selected_adi_proxy(config.adi_backend, &config.android_adi_identifier)?;
     let http_session = grandslam::http_session(
-        grandslam_device(&config.machine_identity),
+        grandslam_device(&config.machine_identity, config.adi_backend),
         XCODE_BUNDLE_INFORMATION,
     )
     .await

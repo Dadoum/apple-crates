@@ -254,6 +254,7 @@ impl<'a, 'b> AuthenticatedHTTPSession<'a, 'b> {
         let response = http_session
             .anisette_request_builder(Method::POST, gs_service_url)
             .map_err(AppTokenRequestError::Anisette)?
+            .header("Content-Type", "text/x-xml-plist")
             .body(request_body)
             .send()
             .await

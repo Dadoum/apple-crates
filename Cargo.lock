@@ -232,6 +232,7 @@ dependencies = [
  "libc",
  "ouroboros",
  "rand 0.9.4",
+ "tempfile",
 ]
 
 [[package]]
@@ -4074,6 +4075,9 @@ version = "0.1.0"
 dependencies = [
  "adi",
  "dlopen2",
+ "md-5",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7089,6 +7093,7 @@ dependencies = [
  "chrono",
  "core-foundation 0.10.0",
  "crc32fast",
+ "der",
  "directories",
  "dlopen2",
  "env_logger",
@@ -7110,14 +7115,18 @@ dependencies = [
  "plist",
  "rand 0.10.2",
  "reqwest",
+ "rsa",
  "serde",
  "sha1 0.11.0",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.23",
  "uuid",
  "walkdir",
+ "windows-sys 0.61.2",
+ "x509-cert",
  "xcode",
 ]
 

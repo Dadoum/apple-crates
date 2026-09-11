@@ -47,12 +47,13 @@ fn main() {
 }
 
 fn init_logging() {
-    let mut builder = env_logger::Builder::from_default_env();
+    let mut builder = env_logger::Builder::new();
     builder
         .filter_module("reqwest", LevelFilter::Info)
         .filter_module("hyper", LevelFilter::Info)
         .filter_module("h2", LevelFilter::Info)
         .filter_module("rustls", LevelFilter::Info)
         .filter_module("elf_loader", LevelFilter::Info);
+    builder.parse_default_env();
     builder.init();
 }

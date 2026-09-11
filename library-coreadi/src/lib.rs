@@ -1,3 +1,6 @@
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 use adi::core_adi::{CoreADIADIProxy, CoreADIParameters, CoreADIProxy};
 use dlopen2::symbor::{Library, Symbol};
 

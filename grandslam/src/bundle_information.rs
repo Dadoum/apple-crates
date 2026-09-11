@@ -13,6 +13,13 @@ pub const AUTH_KIT_BUNDLE_INFORMATION: BundleInformation = BundleInformation {
     bundle_version: "1",
 };
 
+/// akd
+pub const AKD_BUNDLE_INFORMATION: BundleInformation = BundleInformation {
+    bundle_name: "akd",
+    bundle_identifier: "com.apple.akd",
+    bundle_version: "1.0",
+};
+
 /// Apple TV 1.5.6 (macOS Sequoia 15.7.3)
 pub const APPLE_TV_BUNDLE_INFORMATION: BundleInformation = BundleInformation {
     bundle_name: "TV",

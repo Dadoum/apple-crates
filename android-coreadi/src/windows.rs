@@ -31,12 +31,12 @@ unsafe extern "C" {
     fn _errno() -> *mut libc::c_int;
     fn _timespec64_get(__ts: *mut _timespec64, __base: libc::c_int) -> libc::c_int;
     fn _timespec32_get(__ts: *mut _timespec32, __base: libc::c_int) -> libc::c_int;
-    fn _chsize(handle: i64, length: u64) -> usize;
+    fn _chsize_s(handle: libc::c_int, length: i64) -> libc::c_int;
 }
 
 #[linux_cc]
 pub unsafe fn chmod(path: *const libc::c_char, mode: mode_t) -> libc::c_int {
-    libc::chmod(linux_path_to_windows(path).as_ptr(), mem::transmute(mode))
+    libc::chmod(linux_path_to_windows(path).as_ptr(), mode as libc::c_int)
 }
 
 #[linux_cc]
@@ -56,12 +56,18 @@ pub unsafe fn free(p: *mut libc::c_void) {
 }
 
 #[linux_cc]
-pub unsafe fn ftruncate(handle: i64, length: u64) -> usize {
-    _chsize(handle, length)
+pub unsafe fn ftruncate(handle: libc::c_int, length: i64) -> libc::c_int {
+    let result = _chsize_s(handle, length);
+    if result == 0 {
+        0
+    } else {
+        *_errno() = result;
+        -1
+    }
 }
 
 #[linux_cc]
-pub unsafe fn gettimeofday(tp: *mut timeval, tz: *mut libc::c_void) -> libc::c_int {
+pub unsafe fn gettimeofday(tp: *mut timeval, _tz: *mut libc::c_void) -> libc::c_int {
     let mut time = MaybeUninit::uninit();
 
     #[cfg(target_pointer_width = "32")]
@@ -69,6 +75,9 @@ pub unsafe fn gettimeofday(tp: *mut timeval, tz: *mut libc::c_void) -> libc::c_i
     #[cfg(target_pointer_width = "64")]
     let result = _timespec64_get(time.as_mut_ptr(), 1);
 
+    if result != 1 {
+        return -1;
+    }
     let time = time.assume_init();
     *tp = timeval {
         tv_sec: time.tv_sec as _,
@@ -84,7 +93,7 @@ pub unsafe fn malloc(size: libc::size_t) -> *mut libc::c_void {
 }
 
 #[linux_cc]
-pub unsafe fn mkdir(path: *const libc::c_char, mode: mode_t) -> libc::c_int {
+pub unsafe fn mkdir(path: *const libc::c_char, _mode: mode_t) -> libc::c_int {
     libc::mkdir(linux_path_to_windows(path).as_ptr())
 }
 
@@ -119,16 +128,16 @@ unsafe fn local_stat_to_linux(buf: libc::stat) -> stat {
         st_dev: buf.st_dev as _,
         st_ino: buf.st_ino as _,
         st_nlink: buf.st_nlink as _,
-        st_mode: 0o777 as _,
+        st_mode: buf.st_mode as _,
         st_uid: buf.st_uid as _,
         st_gid: buf.st_gid as _,
         st_rdev: buf.st_rdev as _,
         st_size: buf.st_size as _,
-        st_atime: (buf.st_atime / 10000000) as _,
+        st_atime: buf.st_atime as _,
         // st_atime_nsec: buf.st_atime_nsec as _,
-        st_mtime: (buf.st_mtime / 10000000) as _,
+        st_mtime: buf.st_mtime as _,
         // st_mtime_nsec: buf.st_mtime_nsec as _,
-        st_ctime: (buf.st_ctime / 10000000) as _,
+        st_ctime: buf.st_ctime as _,
         // st_ctime_nsec: buf.st_ctime_nsec as _,
         ..mem::zeroed()
     }
@@ -170,24 +179,64 @@ pub unsafe fn fstat(fildes: libc::c_int, buf: *mut stat) -> libc::c_int {
 
 #[linux_cc]
 pub unsafe fn open(path: *const libc::c_char, oflag: libc::c_int) -> libc::c_int {
-    let mut local_flag = 0x8000;
+    let access = match oflag & 3 {
+        O_WRONLY => libc::O_WRONLY,
+        O_RDWR => libc::O_RDWR,
+        _ => libc::O_RDONLY,
+    };
+    let mut local_flag = access | libc::O_BINARY;
+    for (linux, windows) in [
+        (O_CREAT, libc::O_CREAT),
+        (0o200, libc::O_EXCL),
+        (0o1000, libc::O_TRUNC),
+        (0o2000, libc::O_APPEND),
+    ] {
+        if oflag & linux != 0 {
+            local_flag |= windows;
+        }
+    }
+    // The CRT requires a mode argument when creating a file. ADI uses private
+    // provisioning files; Windows ACLs determine access beyond these mode bits.
+    libc::open(
+        linux_path_to_windows(path).as_ptr(),
+        local_flag,
+        libc::S_IREAD | libc::S_IWRITE,
+    )
+}
 
-    if oflag & 0b11 == O_WRONLY {
-        local_flag = libc::O_RDWR;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn provisioning_files_round_trip_binary_data_and_report_linux_stat() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("provisioning");
+        let path_c = CString::new(path.to_str().unwrap()).unwrap();
+        let data = [0, 10, 13, 10, 26, 255];
+        unsafe {
+            let fd = open(path_c.as_ptr(), O_WRONLY | O_CREAT);
+            assert!(fd >= 0);
+            assert_eq!(
+                write(fd, data.as_ptr().cast(), data.len() as _),
+                data.len() as _
+            );
+            assert_eq!(close(fd), 0);
+            assert_eq!(std::fs::read(&path).unwrap(), data);
+            let fd = open(path_c.as_ptr(), O_RDONLY);
+            assert!(fd >= 0);
+            let mut actual = [0; 6];
+            assert_eq!(read(fd, actual.as_mut_ptr().cast(), actual.len() as _), 6);
+            assert_eq!(actual, data);
+            let mut stat = std::mem::zeroed();
+            assert_eq!(fstat(fd, &mut stat), 0);
+            assert_eq!(stat.st_size, 6);
+            assert_eq!(stat.st_mode & 0o170000, 0o100000);
+            assert!(stat.st_mtime > 1_500_000_000);
+            assert_eq!(close(fd), 0);
+            let fd = open(path_c.as_ptr(), O_RDWR);
+            assert_eq!(ftruncate(fd, 2), 0);
+            assert_eq!(close(fd), 0);
+            assert_eq!(std::fs::metadata(&path).unwrap().len(), 2);
+        }
     }
-    if oflag & 0b11 == O_RDWR {
-        local_flag = libc::O_RDWR;
-    }
-    if oflag & 0b11 == O_RDONLY {
-        local_flag = libc::O_RDWR;
-    }
-
-    if oflag & O_CREAT != 0 {
-        local_flag |= libc::O_CREAT;
-    }
-    if oflag & O_NOFOLLOW != 0 {
-        // local_flag |= libc::O_NOFOLLOW;
-    }
-
-    libc::open(linux_path_to_windows(path).as_ptr(), local_flag)
 }

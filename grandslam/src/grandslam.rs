@@ -271,6 +271,7 @@ pub async fn login(
 
     let response = http_session
         .anisette_request_builder(Method::POST, gs_service_url)?
+        .header("Content-Type", "text/x-xml-plist")
         .body(dict_to_body(request_plist))
         .send()
         .await?
@@ -365,6 +366,7 @@ pub async fn login(
         // to be interrupted here. It is important because on some networks, the apptokens
         // request fails if the TLS session is kept alive.
         .header("Connection", "close")
+        .header("Content-Type", "text/x-xml-plist")
         .body(dict_to_body(request_plist))
         .send()
         .await?

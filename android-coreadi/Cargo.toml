@@ -9,3 +9,6 @@ elf-loader.workspace = true
 ouroboros = "0.18.5"
 libc = "0.2.176"
 rand = "0.9"
+
+[dev-dependencies]
+tempfile = "3"

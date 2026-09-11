@@ -54,6 +54,26 @@ where
         .map_err(|_| BackendError::TaskCanceled { label })
 }
 
+// Build large I/O futures on the runtime thread, not on the UI thread's stack.
+pub(crate) async fn run_send_with<T, F, M>(
+    label: &'static str,
+    make_future: M,
+) -> Result<T, BackendError>
+where
+    T: Send + 'static,
+    F: Future<Output = T> + Send + 'static,
+    M: FnOnce() -> F + Send + 'static,
+{
+    let runtime = send_runtime(label)?;
+    let (sender, receiver) = oneshot::channel();
+    runtime.spawn(async move {
+        let _ = sender.send(Box::pin(make_future()).await);
+    });
+    receiver
+        .await
+        .map_err(|_| BackendError::TaskCanceled { label })
+}
+
 fn worker(label: &'static str) -> BackendResult<BackendWorker> {
     match BACKEND_WORKER.get_or_init(start_worker) {
         Ok(worker) => Ok(worker.clone()),

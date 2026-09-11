@@ -59,6 +59,7 @@ impl AuthenticatedHTTPSession<'_, '_> {
 
         let response = self
             .authenticated_request_builder(Method::POST, post_data_url)?
+            .header("Content-Type", "text/x-xml-plist")
             .body(plist_to_body(request.into()))
             .send()
             .await?

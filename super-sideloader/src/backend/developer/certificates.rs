@@ -1,10 +1,18 @@
 use crate::backend::paths::app_data_dir;
 use crate::backend::{BackendError, BackendResult};
+use der::{Decode, Encode, EncodePem};
+use rsa::pkcs1::DecodeRsaPrivateKey;
+use rsa::pkcs1v15::{Signature, SigningKey};
+use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey, LineEnding};
+use rsa::rand_core::OsRng;
+use rsa::RsaPrivateKey;
 use sha1::Digest as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use uuid::Uuid;
+use x509_cert::builder::{Builder, RequestBuilder};
+use x509_cert::name::Name;
+use x509_cert::Certificate;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -27,44 +35,24 @@ pub(crate) fn generate_development_certificate_signing_request(
 ) -> BackendResult<GeneratedCertificateSigningRequest> {
     let machine_id = Uuid::new_v4().to_string().to_uppercase();
     let machine_name = "Super Sideloader".to_string();
-    let temp_dir = certificate_temp_dir()?;
-    fs::create_dir_all(&temp_dir).map_err(|source| BackendError::Io {
-        action: "Create certificate work folder",
-        path: temp_dir.clone(),
-        source,
-    })?;
-    let file_id = Uuid::new_v4().to_string();
-    let key_path = temp_dir.join(format!("{file_id}.key.pem"));
-    let csr_path = temp_dir.join(format!("{file_id}.csr.pem"));
-    let subject = format!("/CN={machine_name}");
-
-    let mut generate = Command::new("openssl");
-    generate
-        .args(["req", "-new", "-newkey", "rsa:2048", "-nodes"])
-        .arg("-keyout")
-        .arg(&key_path)
-        .arg("-out")
-        .arg(&csr_path)
-        .arg("-subj")
-        .arg(subject)
-        .arg("-batch");
-    run_command(generate, "generate a development certificate CSR")?;
-
-    let private_key_pem = fs::read(&key_path).map_err(|source| BackendError::Io {
-        action: "Read generated private key",
-        path: key_path.clone(),
-        source,
-    })?;
-    let csr_content = fs::read_to_string(&csr_path).map_err(|source| BackendError::Io {
-        action: "Read generated CSR",
-        path: csr_path.clone(),
-        source,
-    })?;
-    let public_key_der = public_key_der_from_private_key(&key_path)?;
-    let public_key_fingerprint = certificate_fingerprint(&public_key_der);
-
-    let _ = fs::remove_file(&key_path);
-    let _ = fs::remove_file(&csr_path);
+    let private_key = RsaPrivateKey::new(&mut OsRng, 2048).map_err(crypto_error)?;
+    let public_key_der = private_key
+        .to_public_key()
+        .to_public_key_der()
+        .map_err(crypto_error)?;
+    let public_key_fingerprint = certificate_fingerprint(public_key_der.as_bytes());
+    let private_key_pem = private_key
+        .to_pkcs8_pem(LineEnding::LF)
+        .map_err(crypto_error)?
+        .as_bytes()
+        .to_vec();
+    let signer = SigningKey::<sha2_010::Sha256>::new(private_key);
+    let subject: Name = format!("CN={machine_name}").parse().map_err(crypto_error)?;
+    let csr = RequestBuilder::new(subject, &signer)
+        .map_err(crypto_error)?
+        .build::<Signature>()
+        .map_err(crypto_error)?;
+    let csr_content = csr.to_pem(LineEnding::LF).map_err(crypto_error)?;
 
     Ok(GeneratedCertificateSigningRequest {
         machine_id,
@@ -85,7 +73,7 @@ pub(crate) fn import_app_managed_private_key(
         path: private_key_path.to_path_buf(),
         source,
     })?;
-    let public_key_der = public_key_der_from_private_key(private_key_path)?;
+    let public_key_der = public_key_der_from_private_key(&private_key_pem)?;
     let public_key_fingerprint = certificate_fingerprint(&public_key_der);
     if !public_key_fingerprint.eq_ignore_ascii_case(expected_public_key_fingerprint) {
         return Err(BackendError::Keychain(format!(
@@ -178,50 +166,37 @@ pub(crate) fn load_app_managed_signing_material(
     })
 }
 
-fn public_key_der_from_private_key(key_path: &Path) -> BackendResult<Vec<u8>> {
-    let mut command = Command::new("openssl");
-    command
-        .args(["pkey", "-in"])
-        .arg(key_path)
-        .args(["-pubout", "-outform", "DER"]);
-    command_output(command, "extract the private key public key")
+fn decode_private_key(pem: &[u8]) -> BackendResult<RsaPrivateKey> {
+    let pem = std::str::from_utf8(pem).map_err(crypto_error)?;
+    // Match the unencrypted RSA formats accepted by the app's CMS signer.
+    RsaPrivateKey::from_pkcs8_pem(pem)
+        .or_else(|_| RsaPrivateKey::from_pkcs1_pem(pem))
+        .map_err(|error| {
+            BackendError::Message(format!(
+                "Expected an unencrypted RSA private key in PKCS#8 or PKCS#1 PEM format: {error}"
+            ))
+        })
+}
+
+fn public_key_der_from_private_key(private_key_pem: &[u8]) -> BackendResult<Vec<u8>> {
+    decode_private_key(private_key_pem)?
+        .to_public_key()
+        .to_public_key_der()
+        .map(|document| document.as_bytes().to_vec())
+        .map_err(crypto_error)
 }
 
 fn certificate_public_key_der(certificate_der: &[u8]) -> BackendResult<Vec<u8>> {
-    let temp_dir = certificate_temp_dir()?;
-    fs::create_dir_all(&temp_dir).map_err(|source| BackendError::Io {
-        action: "Create certificate work folder",
-        path: temp_dir.clone(),
-        source,
-    })?;
-    let file_id = Uuid::new_v4().to_string();
-    let certificate_path = temp_dir.join(format!("{file_id}.cer"));
-    let public_key_path = temp_dir.join(format!("{file_id}.pub.pem"));
-    fs::write(&certificate_path, certificate_der).map_err(|source| BackendError::Io {
-        action: "Stage certificate",
-        path: certificate_path.clone(),
-        source,
-    })?;
+    Certificate::from_der(certificate_der)
+        .map_err(crypto_error)?
+        .tbs_certificate
+        .subject_public_key_info
+        .to_der()
+        .map_err(crypto_error)
+}
 
-    let mut extract_public_key = Command::new("openssl");
-    extract_public_key
-        .args(["x509", "-inform", "DER", "-in"])
-        .arg(&certificate_path)
-        .args(["-pubkey", "-noout", "-out"])
-        .arg(&public_key_path);
-    let result =
-        run_command(extract_public_key, "extract the certificate public key").and_then(|_| {
-            let mut convert_public_key = Command::new("openssl");
-            convert_public_key
-                .args(["pkey", "-pubin", "-in"])
-                .arg(&public_key_path)
-                .args(["-outform", "DER"]);
-            command_output(convert_public_key, "encode the certificate public key")
-        });
-
-    let _ = fs::remove_file(&certificate_path);
-    let _ = fs::remove_file(&public_key_path);
-    result
+fn crypto_error(error: impl std::fmt::Display) -> BackendError {
+    BackendError::Message(format!("Certificate operation failed: {error}"))
 }
 
 pub(crate) fn save_app_managed_private_key(
@@ -304,45 +279,79 @@ fn signing_certificates_dir() -> BackendResult<PathBuf> {
         })
 }
 
-fn certificate_temp_dir() -> BackendResult<PathBuf> {
-    app_data_dir()
-        .map(|path| path.join("certificates").join("tmp"))
-        .ok_or_else(|| {
-            BackendError::Unsupported("The application data folder is not available.".to_string())
-        })
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use der::DecodePem;
+    use rsa::pkcs1::EncodeRsaPrivateKey;
+    use rsa::pkcs8::DecodePublicKey;
+    use rsa::signature::Verifier;
+    use rsa::traits::PublicKeyParts;
+    use rsa::{pkcs1v15::VerifyingKey, RsaPublicKey};
+    use x509_cert::builder::{CertificateBuilder, Profile};
+    use x509_cert::request::CertReq;
+    use x509_cert::time::Validity;
 
-fn run_command(mut command: Command, action: &'static str) -> BackendResult<()> {
-    let output = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|source| BackendError::Command { action, source })?;
-    if output.status.success() {
-        return Ok(());
+    #[test]
+    fn csr_signature_keys_and_certificate_fingerprints_agree() {
+        let generated = generate_development_certificate_signing_request().unwrap();
+        let csr = CertReq::from_pem(&generated.csr_content).unwrap();
+        assert_eq!(csr.info.subject.to_string(), "CN=Super Sideloader");
+        assert_eq!(csr.algorithm.oid.to_string(), "1.2.840.113549.1.1.11");
+        let spki = csr.info.public_key.to_der().unwrap();
+        let public_key = RsaPublicKey::from_public_key_der(&spki).unwrap();
+        assert_eq!(public_key.n().bits(), 2048);
+        let verifier = VerifyingKey::<sha2_010::Sha256>::new(public_key);
+        let signature = Signature::try_from(csr.signature.as_bytes().unwrap()).unwrap();
+        let info = csr.info.to_der().unwrap();
+        verifier.verify(&info, &signature).unwrap();
+        let mut tampered = info.clone();
+        tampered[0] ^= 1;
+        assert!(verifier.verify(&tampered, &signature).is_err());
+        assert_eq!(
+            certificate_fingerprint(&spki),
+            generated.public_key_fingerprint
+        );
+        assert_eq!(
+            public_key_der_from_private_key(&generated.private_key_pem).unwrap(),
+            spki
+        );
+
+        let key = decode_private_key(&generated.private_key_pem).unwrap();
+        let pkcs1 = key.to_pkcs1_pem(LineEnding::LF).unwrap();
+        assert_eq!(
+            public_key_der_from_private_key(pkcs1.as_bytes()).unwrap(),
+            spki
+        );
+        let signer = SigningKey::<sha2_010::Sha256>::new(key);
+        let cert = CertificateBuilder::new(
+            Profile::Root,
+            1u32.into(),
+            Validity::from_now(std::time::Duration::from_secs(3600)).unwrap(),
+            csr.info.subject,
+            csr.info.public_key,
+            &signer,
+        )
+        .unwrap()
+        .build::<Signature>()
+        .unwrap();
+        assert_eq!(
+            certificate_public_key_fingerprint(&cert.to_der().unwrap()).unwrap(),
+            generated.public_key_fingerprint
+        );
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("key.pem");
+        fs::write(&path, pkcs1.as_bytes()).unwrap();
+        let error =
+            import_app_managed_private_key("test-certificate", &"0".repeat(40), &path).unwrap_err();
+        assert!(error.to_string().contains("does not match"));
     }
-    Err(command_error(action, &output.stderr))
-}
 
-fn command_output(mut command: Command, action: &'static str) -> BackendResult<Vec<u8>> {
-    let output = command
-        .stdin(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|source| BackendError::Command { action, source })?;
-    if output.status.success() {
-        return Ok(output.stdout);
+    #[test]
+    fn malformed_key_and_certificate_are_rejected() {
+        assert!(public_key_der_from_private_key(b"not a PEM key").is_err());
+        assert!(public_key_der_from_private_key(&[255, 254]).is_err());
+        assert!(certificate_public_key_fingerprint(b"not a certificate").is_none());
     }
-    Err(command_error(action, &output.stderr))
-}
-
-fn command_error(action: &'static str, stderr: &[u8]) -> BackendError {
-    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
-    let detail = if stderr.is_empty() {
-        "Process exited with a non-zero status.".to_string()
-    } else {
-        stderr
-    };
-    BackendError::CommandFailed { action, detail }
 }

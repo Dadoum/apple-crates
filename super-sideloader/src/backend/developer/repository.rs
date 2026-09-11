@@ -24,6 +24,7 @@ use grandslam::{AuthOutcome, AuthenticatedHTTPSession, Token};
 use plist::{Dictionary, Value};
 use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
+use grandslam::bundle_information::AKD_BUNDLE_INFORMATION;
 use xcode::{
     AddAppIdAction, AddDeviceAction, AppIdFeature, DeleteAppIdAction, DeleteDeviceAction,
     DeveloperTeam, DownloadTeamProvisioningProfileAction, IOSRequest,
@@ -870,8 +871,8 @@ async fn login_developer_account_async(
     let account_id = new_account_id();
     let proxy = selected_adi_proxy(request.adi_backend, &request.android_adi_identifier)?;
     let http_session = grandslam::http_session(
-        grandslam_device(&request.machine_identity),
-        XCODE_BUNDLE_INFORMATION,
+        grandslam_device(&request.machine_identity, request.adi_backend),
+        AKD_BUNDLE_INFORMATION,
     )
     .await
     .map_err(|error| {
