@@ -1,7 +1,10 @@
 [package]
-name = "apple-codesign"
+name = "apple-codesign-quick"
 version = "0.1.0"
+description = "A quick and probably quirky crate to codesign Apple application bundles; based on Sideloader's D code"
 edition = "2024"
+repository = "https://github.com/Dadoum/apple-crates"
+license = "LGPL-2.1-or-later"
 
 [dependencies]
 plist.workspace = true

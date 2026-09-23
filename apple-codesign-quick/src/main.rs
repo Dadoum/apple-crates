@@ -1,4 +1,4 @@
-use apple_codesign::{
+use apple_codesign_quick::{
     BundleSigningSettings, CodeSignError, ProvisioningProfile, Result, RustCryptoCmsSigner,
     sign_bundle,
 };
