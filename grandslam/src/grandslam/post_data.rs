@@ -30,7 +30,7 @@ pub struct DeviceData {
     #[serde(rename = "dn")]
     pub device_name: Option<String>,
     #[serde(rename = "event")]
-    pub event: Option<String>,
+    pub event: Option<String>, // liveness
     #[serde(rename = "imei")]
     pub imei: Option<String>,
     #[serde(rename = "loc")]

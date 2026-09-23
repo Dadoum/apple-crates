@@ -288,39 +288,39 @@ pub async fn login(
     let response_dict = response_plist
         .get("Response")
         .and_then(|response| response.as_dictionary())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     let status = response_dict
         .get("Status")
         .and_then(|status| status.as_dictionary())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     parse_status(status).map_err(AuthError::Apple)?;
 
     let iteration_count = response_dict
         .get("i")
         .and_then(|iteration_count| iteration_count.as_unsigned_integer())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     let salt = response_dict
         .get("s")
         .and_then(|salt| salt.as_data())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     let selected_protocol = response_dict
         .get("sp")
         .and_then(|selected_protocol| selected_protocol.as_string())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     let cookie = response_dict
         .get("c")
         .and_then(|cookie| cookie.as_string())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     let b = response_dict
         .get("B")
         .and_then(|b| b.as_data())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     let hashed_password: Vec<u8> = match selected_protocol {
         // SRP with a 2048/4096-bit long A.
@@ -385,14 +385,14 @@ pub async fn login(
     let response_dict = response_plist
         .get("Response")
         .and_then(|response| response.as_dictionary())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     // println!("Response: {response_dict:?}");
 
     let status = response_dict
         .get("Status")
         .and_then(|status| status.as_dictionary())
-        .ok_or(AuthError::Structure(response_plist.clone()))?;
+        .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     parse_status(status)?;
 
@@ -410,7 +410,7 @@ pub async fn login(
             let server_reply = response_dict
                 .get("M2")
                 .and_then(|server_reply| server_reply.as_data())
-                .ok_or(AuthError::Structure(response_plist.clone()))?;
+                .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
             verifier
                 .verify_server(server_reply)
@@ -463,7 +463,7 @@ pub async fn login(
                 .get("au")
                 .and_then(|action_url| action_url.as_string())
                 .map(|action_url| action_url.to_string())
-                .ok_or(AuthError::Structure(response_plist))?;
+                .ok_or_else(|| AuthError::Structure(response_plist))?;
 
             Ok(AuthOutcome::SecondaryActionRequired(
                 server_provided_data,
@@ -475,7 +475,7 @@ pub async fn login(
             let sim = status
                 .get("X-Apple-I-MD-DATA")
                 .and_then(|sim| sim.as_string())
-                .ok_or(AuthError::Structure(response_plist.clone()))?;
+                .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
             let sim = BASE64_STANDARD
                 .decode(sim)
@@ -487,11 +487,59 @@ pub async fn login(
             let url_switching_data = status
                 .get("X-Apple-I-Data")
                 .and_then(|data| data.as_string())
-                .ok_or(AuthError::Structure(response_plist.clone()))?;
+                .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
             Ok(AuthOutcome::UrlSwitchingRequired(
                 url_switching_data.to_string(),
             ))
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum ValidateCodeError {
+    #[error("The provided code is not valid.")]
+    InvalidCode,
+    #[error("Could not log-in to Apple servers: {0}")]
+    Apple(#[from] AppleError),
+    #[error("Cannot generate device authentication data: {0}")]
+    Anisette(#[from] ADIError),
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+    // vvv Internal errors vvv
+    #[error("Invalid URL bag")]
+    InvalidURLBag,
+    #[error("Cannot parse server response: {0}")]
+    Parsing(plist::Error),
+}
+
+pub async fn validate_code(
+    http_session: &AnisetteHTTPSession<'_, '_>,
+    second_factor_code: u32
+) -> Result<(), ValidateCodeError> {
+    let validate_code_url = http_session
+        .url_bag()
+        .get("validateCode")
+        .and_then(Value::as_string)
+        .ok_or(ValidateCodeError::InvalidURLBag)?;
+
+    let response = http_session
+        .anisette_request_builder(Method::POST, validate_code_url)?
+        .header("security-code", second_factor_code.to_string())
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+
+    let response_plist: Dictionary =
+        plist::from_bytes(&response).map_err(ValidateCodeError::Parsing)?;
+
+    parse_status(&response_plist)
+        .map_err(|err|
+            match err {
+                AppleError { code: -21669, .. } => ValidateCodeError::InvalidCode,
+                err => ValidateCodeError::Apple(err)
+            }
+        )
 }
