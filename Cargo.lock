@@ -301,7 +301,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
-name = "apple-codesign"
+name = "apple-codesign-quick"
 version = "0.1.0"
 dependencies = [
  "byteorder",
@@ -3140,6 +3140,7 @@ dependencies = [
  "srp",
  "sys-locale",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -7088,7 +7089,7 @@ dependencies = [
  "adi",
  "adid-proxy",
  "android-coreadi",
- "apple-codesign",
+ "apple-codesign-quick",
  "async_zip",
  "chrono",
  "core-foundation 0.10.0",

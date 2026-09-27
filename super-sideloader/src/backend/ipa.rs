@@ -8,7 +8,7 @@ use crate::domain::{
     AppEntitlement, AppMetadata, EntitlementValue, EntitlementsSource, IpaApp, NestedBundle,
     NestedBundleKind, Patch, SupportedDeviceFamily,
 };
-use apple_codesign::{
+use apple_codesign_quick::{
     sign_bundle, BundleSigningSettings, ProvisioningProfile, RustCryptoCmsSigner,
 };
 use async_zip::base::read::mem::ZipFileReader as MemoryZipFileReader;

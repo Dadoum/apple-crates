@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 adi.workspace = true
 android-coreadi.workspace = true
-apple-codesign = { path = "../apple-codesign-quick" }
+apple-codesign-quick = { path = "../apple-codesign-quick" }
 async_zip = { version = "0.0.18", features = ["deflate", "tokio", "tokio-fs"] }
 chrono = { version = "0.4.42", default-features = false, features = ["clock"] }
 crc32fast = "1.5"

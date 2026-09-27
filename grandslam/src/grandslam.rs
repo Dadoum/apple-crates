@@ -195,9 +195,7 @@ pub fn build_client_provided_data(
 
         "X-Mme-Device-Id": device.device_uuid.clone(),
 
-        "bootstrap": true,
         "capp": application_information.bundle_name,
-        "ckgen": true,
         "icscrec": true,
         "loc": locale,
         "pbe": false,
@@ -234,10 +232,46 @@ impl TryFrom<u64> for StatusCode {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct ContinuationToken(String);
+
 pub async fn login(
     http_session: &AnisetteHTTPSession<'_, '_>,
     apple_id: &str,
     password: &str,
+) -> AuthResult {
+    login_with_credential(http_session, apple_id, LoginCredential::Password(password)).await
+}
+
+/// Authenticate using a previously issued continuation token instead of a password.
+///
+/// Use the Apple ID and device identity associated with the token. The server can
+/// still require a secondary action or reject a revoked token; callers decide
+/// whether to fall back to password authentication. Extract the token from the
+/// returned server-provided data again after success to pick up a replacement.
+pub async fn login_with_continuation_token(
+    http_session: &AnisetteHTTPSession<'_, '_>,
+    apple_id: &str,
+    continuation_token: &ContinuationToken,
+) -> AuthResult {
+    login_with_credential(
+        http_session,
+        apple_id,
+        LoginCredential::ContinuationToken(continuation_token),
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+enum LoginCredential<'a> {
+    Password(&'a str),
+    ContinuationToken(&'a ContinuationToken),
+}
+
+async fn login_with_credential(
+    http_session: &AnisetteHTTPSession<'_, '_>,
+    apple_id: &str,
+    credential: LoginCredential<'_>,
 ) -> AuthResult {
     let gs_service_url = http_session
         .url_bag()
@@ -245,7 +279,21 @@ pub async fn login(
         .and_then(Value::as_string)
         .ok_or(AuthError::InvalidURLBag)?;
 
-    let cpd = build_client_provided_data(http_session)?;
+    let cpd = {
+        let mut cpd = build_client_provided_data(http_session)?;
+
+        match credential {
+            LoginCredential::ContinuationToken(_) => {
+                cpd.insert("ckauth".into(), true.into());
+            }
+            LoginCredential::Password(_) => {
+                cpd.insert("bootstrap".into(), true.into());
+                cpd.insert("ckgen".into(), true.into());
+            }
+        };
+
+        cpd
+    };
 
     // TODO: implement s4k, if some day someone needs that.
     let srp_client = srp::Client::<G2048, Sha256>::new_with_options(false);
@@ -259,7 +307,7 @@ pub async fn login(
         },
         "Request": dict!{
             "A2k": Value::Data(a_pub),
-            "cpd": cpd,
+            "cpd": cpd.clone(),
             "o": "init",
             "ps": array![
                 "s2k",
@@ -322,11 +370,16 @@ pub async fn login(
         .and_then(|b| b.as_data())
         .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
+    let secret = match credential {
+        LoginCredential::Password(password) => { password },
+        LoginCredential::ContinuationToken(ck) => { ck.0.as_str() }
+    }.as_bytes();
+
     let hashed_password: Vec<u8> = match selected_protocol {
         // SRP with a 2048/4096-bit long A.
-        "s2k" | "s4k" => Sha256::digest(password.as_bytes()).to_vec(),
+        "s2k" | "s4k" => Sha256::digest(secret).to_vec(),
         // SRP with a 2048-bit long A + fo?
-        "s2k_fo" => hex::encode(Sha256::digest(password.as_bytes())).into_bytes(),
+        "s2k_fo" => hex::encode(Sha256::digest(secret)).into_bytes(),
         _ => {
             return Err(AuthError::UnknownProtocol(selected_protocol.into()));
         }
@@ -341,8 +394,6 @@ pub async fn login(
 
     let verifier =
         srp_client.process_reply(&a, apple_id.as_bytes(), &processed_password, salt, b)?;
-
-    let cpd = build_client_provided_data(http_session)?;
 
     let request_plist = dict! {
         "Header": dict!{
