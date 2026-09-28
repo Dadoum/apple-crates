@@ -19,6 +19,15 @@ use thiserror::Error;
 #[serde(transparent)]
 pub struct AltDsid(pub(super) String);
 
+impl AltDsid {
+    /// Read the account identifier without requiring any tokens.
+    pub fn from_response_headers(
+        headers: &reqwest::header::HeaderMap,
+    ) -> Result<Option<AltDsid>, ResponseTokenError> {
+        Ok(header_text(headers, "x-apple-alternate-id")?.map(AltDsid))
+    }
+}
+
 impl AsRef<str> for AltDsid {
     fn as_ref(&self) -> &str {
         &self.0
@@ -29,6 +38,24 @@ impl AsRef<str> for AltDsid {
 #[serde(transparent)]
 pub struct IdmsToken(pub(super) String);
 
+impl IdmsToken {
+    /// Read the identity token without requiring app tokens or an account identifier.
+    pub fn from_response_headers(
+        headers: &reqwest::header::HeaderMap,
+    ) -> Result<Option<IdmsToken>, ResponseTokenError> {
+        let name = "x-apple-identity-token";
+        let mut values = headers.get_all(name).iter();
+        let token = values
+            .next()
+            .map(|value| header_token(value, name))
+            .transpose()?;
+        if values.next().is_some() {
+            return Err(ResponseTokenError::InvalidHeader(name));
+        }
+        Ok(token.map(|(_, token)| IdmsToken(token.token)))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SessionKey(Vec<u8>);
@@ -37,7 +64,8 @@ pub struct SessionKey(Vec<u8>);
 #[serde(transparent)]
 pub struct AuthCookie(Vec<u8>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(transparent)]
 pub struct ServerProvidedData(pub(super) Dictionary);
 
 impl ServerProvidedData {
@@ -255,4 +283,65 @@ impl<'lt, 'adi> AccountHTTPSession<'lt, 'adi> {
             })
             .ok_or_else(|| AppTokenRequestError::InvalidResponse(tokens.0))
     }
+}
+
+pub(super) fn header_text(
+    headers: &reqwest::header::HeaderMap,
+    name: &'static str,
+) -> Result<Option<String>, ResponseTokenError> {
+    let mut values = headers.get_all(name).iter();
+    let value = values
+        .next()
+        .map(|value| {
+            value
+                .to_str()
+                .map(str::to_owned)
+                .map_err(|_| ResponseTokenError::InvalidHeader(name))
+        })
+        .transpose()?;
+    if values.next().is_some() || value.as_ref().is_some_and(String::is_empty) {
+        return Err(ResponseTokenError::InvalidHeader(name));
+    }
+    Ok(value)
+}
+
+pub(super) fn header_token(
+    value: &reqwest::header::HeaderValue,
+    name: &'static str,
+) -> Result<(String, Token), ResponseTokenError> {
+    use base64::{Engine, prelude::BASE64_STANDARD};
+    let bytes = BASE64_STANDARD
+        .decode(value.as_bytes())
+        .map_err(|_| ResponseTokenError::InvalidHeader(name))?;
+    let value = std::str::from_utf8(&bytes).map_err(|_| ResponseTokenError::InvalidHeader(name))?;
+    let fields: Vec<_> = value.split(':').collect();
+    if fields.len() != 4 || fields[0].is_empty() || fields[1].is_empty() {
+        return Err(ResponseTokenError::InvalidHeader(name));
+    }
+    let duration: u64 = fields[2]
+        .parse()
+        .map_err(|_| ResponseTokenError::InvalidHeader(name))?;
+    let issued: u64 = fields[3]
+        .parse()
+        .map_err(|_| ResponseTokenError::InvalidHeader(name))?;
+    let expiry_epoch_millis = duration
+        .checked_mul(1000)
+        .and_then(|duration| issued.checked_add(duration))
+        .ok_or(ResponseTokenError::InvalidHeader(name))?;
+    Ok((
+        fields[0].to_owned(),
+        Token {
+            token: fields[1].to_owned(),
+            duration,
+            expiry_epoch_millis,
+        },
+    ))
+}
+
+#[derive(Debug, Error)]
+pub enum ResponseTokenError {
+    #[error("Invalid authentication response header: {0}")]
+    InvalidHeader(&'static str),
+    #[error("Duplicate service token in authentication response")]
+    DuplicateService,
 }

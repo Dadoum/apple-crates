@@ -31,13 +31,14 @@ return a replacement. Extract and save the token again after success to handle
 rotation. The library does not persist credentials or automatically fall back to
 a password when a token is rejected.
 
-Secondary-action responses can issue a token in `X-Apple-I-CK`. Before consuming
-the response body, call
-`ContinuationToken::from_response_headers(response.headers())` to base64-decode
-that header into a UTF-8 token. An absent header returns `Ok(None)`; malformed
-base64, invalid UTF-8, and empty tokens return an error. The `ck` plist value is
-already decoded and must not be decoded a second time. Tokens support serde for
-secure storage and redact their value in `Debug` output.
+Secondary-action response headers are separate from `ServerProvidedData`.
+Use `TokenBag::from_response_headers` to extract app and heartbeat tokens, and
+`ContinuationToken::from_response_headers`, `IdmsToken::from_response_headers`
+and `AltDsid::from_response_headers` for the individual values. Missing values
+return `Ok(None)` or an empty token bag; malformed values return `ResponseTokenError`.
+Callers decide which values are required to complete their operation.
+App-token expiry is calculated from the issue timestamp and duration carried
+in the header. These helpers do not construct a GrandSlam SPD dictionary.
 
 These details were traced in AuthKitWin 394.2 in Ghidra:
 `_CopyAuthParametersForAccount` (`0x18003ca60`) selects the SRP secret and flags;

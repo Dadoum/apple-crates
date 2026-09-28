@@ -1,4 +1,4 @@
-use super::account::AccountHTTPSession;
+use super::account::{AccountHTTPSession, ResponseTokenError, header_token};
 use adi::proxy::ADIResult;
 use plist::Dictionary;
 use reqwest::{Method, RequestBuilder};
@@ -22,6 +22,34 @@ pub trait AppToken: From<String> + AsRef<str> {
 pub struct TokenBag(pub(super) Dictionary);
 
 impl TokenBag {
+    /// Extract app and heartbeat tokens. Missing headers produce an empty bag.
+    pub fn from_response_headers(
+        headers: &reqwest::header::HeaderMap,
+    ) -> Result<Self, ResponseTokenError> {
+        let mut tokens = Dictionary::new();
+        for name in ["x-apple-gs-token", "x-apple-hb-token"] {
+            for value in headers.get_all(name) {
+                let (service, token) = header_token(value, name)?;
+                let value = plist_macros::dict! {
+                    "token": token.token,
+                    "duration": token.duration,
+                    "expiry": token.expiry_epoch_millis,
+                };
+                if tokens.insert(service, value.into()).is_some() {
+                    return Err(ResponseTokenError::DuplicateService);
+                }
+            }
+        }
+        Ok(Self(tokens))
+    }
+
+    pub fn entries(&self) -> Result<std::collections::BTreeMap<String, Token>, plist::Error> {
+        self.0
+            .iter()
+            .map(|(service, value)| Ok((service.clone(), plist::from_value(value)?)))
+            .collect()
+    }
+
     pub fn get<T: AppToken>(&self) -> Option<Token<T>> {
         let token: Token = plist::from_value(self.0.get(T::APP_TOKEN_IDENTIFIER)?).ok()?;
         Some(Token {

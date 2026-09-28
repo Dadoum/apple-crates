@@ -154,6 +154,7 @@ impl<'lt> BasicHTTPSession<'lt> {
         };
 
         let client = client_builder
+            .redirect(reqwest::redirect::Policy::none())
             .default_headers(headers)
             .connection_verbose(false)
             .build()

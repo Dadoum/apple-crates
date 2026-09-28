@@ -14,10 +14,10 @@ use crate::http_session::{
     URLBagError, parse_status,
 };
 use crate::plist_request::dict_to_body;
+pub use account::*;
 use adi::proxy::{ADIError, ADIResult};
 use aes::cipher::block_padding;
 use aes::cipher::block_padding::Pkcs7;
-pub use account::*;
 pub use anisette::*;
 pub use app::*;
 use base64::Engine;
@@ -25,12 +25,11 @@ use base64::prelude::BASE64_STANDARD;
 use bytes::Bytes;
 use cbc::cipher::{BlockModeDecrypt, KeyIvInit};
 use chrono::{Local, SecondsFormat};
+pub use heartbeat::*;
 use hmac::{Hmac, KeyInit, Mac};
-use log::trace;
+pub use identity::*;
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
-pub use heartbeat::*;
-pub use identity::*;
 use reqwest::{Certificate, Method};
 use sha2::{Digest, Sha256};
 use srp::groups::G2048;
@@ -241,6 +240,15 @@ impl TryFrom<u64> for StatusCode {
 #[serde(transparent)]
 pub struct ContinuationToken(String);
 
+impl ContinuationToken {
+    /// Read the continuation token independently of other response headers.
+    pub fn from_response_headers(
+        headers: &reqwest::header::HeaderMap,
+    ) -> Result<Option<ContinuationToken>, ResponseTokenError> {
+        Ok(account::header_text(headers, "x-apple-i-ck")?.map(ContinuationToken))
+    }
+}
+
 /// Authenticate with an Apple Account username or AltDSID and a password.
 /// Pass `alt_dsid.as_ref()` to use a typed `AltDsid`.
 pub async fn login(
@@ -380,9 +388,10 @@ async fn login_with_credential(
         .ok_or_else(|| AuthError::Structure(response_plist.clone()))?;
 
     let secret = match credential {
-        LoginCredential::Password(password) => { password },
-        LoginCredential::ContinuationToken(ck) => { ck.0.as_str() }
-    }.as_bytes();
+        LoginCredential::Password(password) => password,
+        LoginCredential::ContinuationToken(ck) => ck.0.as_str(),
+    }
+    .as_bytes();
 
     let hashed_password: Vec<u8> = match selected_protocol {
         // SRP with a 2048/4096-bit long A.
@@ -505,8 +514,6 @@ async fn login_with_credential(
                     auth_step: 3,
                     error,
                 })?;
-
-            trace!("Parsed server provided data: {:#?}", server_provided_data);
 
             Ok(ServerProvidedData(server_provided_data))
         })

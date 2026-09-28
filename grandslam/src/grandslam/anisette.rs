@@ -75,6 +75,14 @@ pub async fn provision(
             "midStartProvisioning".into(),
         ))?;
 
+    let mid_finish_provisioning_url = http_session
+        .url_bag()
+        .get("midFinishProvisioning")
+        .and_then(Value::as_string)
+        .ok_or(ProvisioningError::URLNotFound(
+            "midFinishProvisioning".into(),
+        ))?;
+
     let start_provisioning_request_builder =
         http_session.simple_request_builder(Method::GET, mid_start_provisioning_url);
 
@@ -107,14 +115,6 @@ pub async fn provision(
     let (cpim, session) = adi_proxy
         .start_provisioning(GRANDSLAM_DSID, &spim)
         .map_err(ProvisioningError::ADIError)?;
-
-    let mid_finish_provisioning_url = http_session
-        .url_bag()
-        .get("midFinishProvisioning")
-        .and_then(Value::as_string)
-        .ok_or(ProvisioningError::URLNotFound(
-            "midFinishProvisioning".into(),
-        ))?;
 
     // Soon try blocks will come to Rust :,)
     let ptm_tk_result = async {
