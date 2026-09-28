@@ -88,6 +88,40 @@ pub enum ADIError {
     UnknownError(i32) = -1,
 }
 
+impl ADIError {
+    /// Returns the native ADI error code, preserving unknown values.
+    pub const fn code(&self) -> i32 {
+        match self {
+            Self::InvalidParameters => -45001,
+            Self::InvalidParameters2 => -45002,
+            Self::InvalidTK => -45003,
+            Self::PTMTKPairMismatch => -45006,
+            Self::ThreadingError => -45012,
+            Self::UnreachableADID => -45016,
+            Self::MachMessageError => -45017,
+            Self::InvalidEncryptionScheme => -45018,
+            Self::InvalidFunctionCode => -45019,
+            Self::InvalidParameterBody => -45020,
+            Self::InvalidSession => -45025,
+            Self::EmptySession => -45026,
+            Self::InvalidEncryptedBlockHeader => -45031,
+            Self::InvalidEncryptedBlockLength => -45032,
+            Self::InvalidEncryptedBlockContent => -45033,
+            Self::InvalidADICall => -45034,
+            Self::InvalidTime => -45036,
+            Self::InvalidHardwareIdentifiers => -45046,
+            Self::FilesystemError => -45054,
+            Self::NotProvisioned => -45061,
+            Self::NoProvisioningToErase => -45062,
+            Self::PendingSession => -45063,
+            Self::TerminatedSession => -45066,
+            Self::LibraryLoadingError => -45075,
+            Self::UnsupportedCoreADI => -45076,
+            Self::UnknownError(code) => *code,
+        }
+    }
+}
+
 impl From<i32> for ADIError {
     fn from(value: i32) -> Self {
         match value {
@@ -282,4 +316,17 @@ pub trait ADIProxy {
 
     /// Exclusive to Apple's ADI implementations: compute a 2FA code.
     fn generate_2fa_code(&self, ds_id: i64) -> ADIResult<u32>;
+}
+
+#[cfg(test)]
+mod error_code_tests {
+    use super::ADIError;
+
+    #[test]
+    fn native_error_codes_round_trip() {
+        for code in -45100..=0 {
+            assert_eq!(ADIError::from(code).code(), code);
+        }
+        assert_eq!(ADIError::UnknownError(-49876).code(), -49876);
+    }
 }

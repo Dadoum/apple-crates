@@ -80,7 +80,7 @@ impl Display for AndroidCoreADILoadingError {
 impl Error for AndroidCoreADILoadingError {}
 
 impl<T: Deref<Target = [u8]>> AndroidCoreADIProxy<T> {
-    pub fn load_library(core_adi_data: T) -> Result<Self, AndroidCoreADILoadingError> {
+    pub fn build_hook_table() -> HashMap<&'static str, *const c_void> {
         let mut hooks = HashMap::new();
         hooks.insert("arc4random", android_arc4random as *const c_void);
         hooks.insert("chmod", chmod as *const c_void);
@@ -111,6 +111,14 @@ impl<T: Deref<Target = [u8]>> AndroidCoreADIProxy<T> {
         hooks.insert("pthread_rwlock_unlock", nil_fn as *const c_void);
         hooks.insert("pthread_rwlock_wrlock", nil_fn as *const c_void);
 
+        hooks
+    }
+
+    pub fn load_library(core_adi_data: T) -> Result<Self, AndroidCoreADILoadingError> {
+        Self::load_library_with_hooks(core_adi_data, Self::build_hook_table())
+    }
+
+    pub fn load_library_with_hooks(core_adi_data: T, hooks: HashMap<&'static str, *const c_void>) -> Result<Self, AndroidCoreADILoadingError> {
         let core_adi = AndroidCoreADIProxy(
             _AndroidCoreADIProxyTryBuilder {
                 data: core_adi_data,
@@ -124,7 +132,7 @@ impl<T: Deref<Target = [u8]>> AndroidCoreADIProxy<T> {
                         .ok_or(AndroidCoreADILoadingError::InvalidCoreADI)
                 },
             }
-            .try_build()?,
+                .try_build()?,
         );
 
         Ok(core_adi)
