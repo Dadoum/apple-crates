@@ -29,14 +29,16 @@ impl Display for URLSwitchingError {
 
 impl Error for URLSwitchingError {}
 
+/// Fetches a replacement URL bag from the original bag lookup URL.
+/// `idata` is the opaque data from `AuthOutcome::UrlSwitchingRequired`, not a URL.
 pub async fn url_switch(
     http_session: &mut HTTPSession<'_>,
-    url: &str,
+    bag_lookup_url: &str,
     idata: &str,
 ) -> Result<(), URLSwitchingError> {
     let url_bag_response = http_session
-        .request_builder(Method::GET, url)
-        .query(&[("idata", idata.to_string())])
+        .request_builder(Method::GET, bag_lookup_url)
+        .query(&[("idata", idata)])
         .send()
         .await
         .map_err(URLSwitchingError::Reqwest)?

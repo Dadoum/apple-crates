@@ -271,7 +271,7 @@ pub async fn sync_machine(
         .ok_or(SyncError::URLNotFound)?;
 
     let sync_machine_request_builder =
-        http_session.simple_request_builder(Method::GET, mid_sync_machine_url);
+        http_session.simple_request_builder(Method::POST, mid_sync_machine_url);
 
     let mut sync_machine_request_body = Vec::<u8>::new();
     plist::to_writer_xml(&mut sync_machine_request_body, &sync_machine_request_plist)
@@ -283,6 +283,8 @@ pub async fn sync_machine(
         .send()
         .await
         .map_err(SyncError::Network)?
+        .error_for_status()
+        .map_err(SyncError::Network)?
         .bytes()
         .await
         .map_err(SyncError::Network)?;
@@ -290,13 +292,38 @@ pub async fn sync_machine(
     let sync_machine_response_plist: Dictionary =
         plist::from_bytes(&sync_machine_response).map_err(SyncError::Parsing)?;
 
-    sync_machine_response_plist
+    let response = sync_machine_response_plist
         .get("Response")
-        .and_then(|response| response.as_dictionary())
-        .and_then(|response| response.get("Status"))
-        .and_then(|response| response.as_dictionary())
-        .map(|status| parse_status(status).map_err(SyncError::Apple))
-        .ok_or(SyncError::ResponseStructure(
-            sync_machine_response_plist.clone(),
-        ))?
+        .and_then(Value::as_dictionary)
+        .ok_or_else(|| SyncError::ResponseStructure(sync_machine_response_plist.clone()))?;
+    let status = response
+        .get("Status")
+        .and_then(Value::as_dictionary)
+        .ok_or_else(|| SyncError::ResponseStructure(sync_machine_response_plist.clone()))?;
+    let code = status
+        .get("ec")
+        .and_then(Value::as_signed_integer)
+        .ok_or_else(|| SyncError::ResponseStructure(sync_machine_response_plist.clone()))?;
+    if code != 0 {
+        return Err(SyncError::Apple(AppleError {
+            code,
+            message: status
+                .get("em")
+                .and_then(Value::as_string)
+                .unwrap_or("Unknown synchronization error")
+                .to_owned(),
+        }));
+    }
+
+    if let Some(routing_info) = response.get("X-Apple-I-MD-RINFO") {
+        let routing_info = routing_info
+            .as_unsigned_integer()
+            .or_else(|| routing_info.as_string()?.parse().ok())
+            .ok_or_else(|| SyncError::ResponseStructure(sync_machine_response_plist.clone()))?;
+        adi_proxy
+            .set_idms_routing(GRANDSLAM_DSID, routing_info)
+            .map_err(SyncError::ADI)?;
+    }
+
+    Ok(())
 }

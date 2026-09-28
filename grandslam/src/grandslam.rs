@@ -131,6 +131,7 @@ pub enum AuthOutcome {
     SecondaryActionRequired(Option<ServerProvidedData>, String),
     AnisetteResyncRequired(Vec<u8>),
     AnisetteReprovisionRequired,
+    /// Opaque `idata` to pass to `url_switch` with the original bag lookup URL.
     UrlSwitchingRequired(String),
 }
 
