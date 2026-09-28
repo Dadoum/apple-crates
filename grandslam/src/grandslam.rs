@@ -235,7 +235,8 @@ impl TryFrom<u64> for StatusCode {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ContinuationToken(String);
 
 pub async fn login(
