@@ -322,6 +322,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "aps"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "plist",
+ "reqwest",
+ "rsa",
+ "serde",
+ "sha1 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "uuid",
+ "x509-cert",
+]
+
+[[package]]
 name = "ar_archive_writer"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7577,7 +7594,9 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",
@@ -9250,6 +9269,8 @@ name = "xcode"
 version = "0.1.0"
 dependencies = [
  "adi",
+ "android-coreadi",
+ "env_logger",
  "grandslam",
  "plist",
  "plist-macros",
@@ -9258,6 +9279,7 @@ dependencies = [
  "serde_bytes",
  "sys-locale",
  "thiserror 2.0.18",
+ "tokio",
  "uuid",
 ]
 

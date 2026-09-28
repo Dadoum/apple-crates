@@ -1,11 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["adi", "adid-proxy", "android-coreadi", "grandslam", "apple-codesign-quick", "elf-loader", "fairplay", "itunes", "library-coreadi", "plist-macros", "purple-builder", "super-sideloader", "xcode"]
+members = ["adi", "adid-proxy", "android-coreadi", "aps", "grandslam", "apple-codesign-quick", "elf-loader", "fairplay", "itunes", "library-coreadi", "plist-macros", "purple-builder", "super-sideloader", "xcode"]
 
 [workspace.dependencies]
 adi = { path = "adi" }
 adid-proxy = { path = "adid-proxy" }
 android-coreadi = { path = "android-coreadi" }
+aps = { path = "aps" }
 elf-loader = { path = "elf-loader" }
 grandslam = { path = "grandslam" }
 itunes = { path = "itunes" }
