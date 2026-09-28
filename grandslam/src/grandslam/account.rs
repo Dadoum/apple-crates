@@ -9,7 +9,7 @@ use aes_gcm::{AesGcm, KeyInit};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use hmac::{Hmac, Mac};
-use log::{trace, warn};
+use log::warn;
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
 use reqwest::{Method, RequestBuilder};
@@ -146,7 +146,24 @@ impl<'lt, 'adi> AccountHTTPSession<'lt, 'adi> {
         session_key: &SessionKey,
         cookie: &AuthCookie,
     ) -> Result<Token<T>, AppTokenRequestError> {
-        let app_token_identifier = T::APP_TOKEN_IDENTIFIER;
+        let token = self
+            .get_app_token_for_service(T::APP_TOKEN_IDENTIFIER, idms_token, session_key, cookie)
+            .await?;
+        Ok(Token {
+            duration: token.duration,
+            expiry_epoch_millis: token.expiry_epoch_millis,
+            token: T::from(token.token),
+        })
+    }
+
+    /// Request a token for a service identifier supplied at runtime.
+    pub async fn get_app_token_for_service(
+        &self,
+        app_token_identifier: &str,
+        idms_token: &IdmsToken,
+        session_key: &SessionKey,
+        cookie: &AuthCookie,
+    ) -> Result<Token, AppTokenRequestError> {
         let alt_dsid = self.alt_dsid.0.as_str();
 
         let gs_service_url = self
@@ -209,8 +226,6 @@ impl<'lt, 'adi> AccountHTTPSession<'lt, 'adi> {
             .and_then(|response| response.as_dictionary())
             .ok_or_else(|| AppTokenRequestError::Structure(response_plist.clone()))?;
 
-        // println!("Response: {response_dict:?}");
-
         let status = response_dict
             .get("Status")
             .and_then(|status| status.as_dictionary())
@@ -251,12 +266,15 @@ impl<'lt, 'adi> AccountHTTPSession<'lt, 'adi> {
         let tokens: Dictionary =
             plist::from_bytes(&tokens_data).map_err(AppTokenRequestError::Parsing)?;
 
-        trace!("Decrypted token response: {:#?}", tokens);
-
         let tokens = ServerProvidedData(tokens);
         tokens
             .tokens()
-            .and_then(|tokens| tokens.get())
+            .and_then(|tokens| {
+                tokens
+                    .0
+                    .get(app_token_identifier)
+                    .and_then(|token| plist::from_value(token).ok())
+            })
             .ok_or_else(|| AppTokenRequestError::InvalidResponse(tokens.0))
     }
 
