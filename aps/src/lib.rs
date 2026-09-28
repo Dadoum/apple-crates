@@ -15,3 +15,7 @@ pub use activation::{
 pub use connection::{ConnectError, Notification, PushConnection, PushToken};
 pub use protocol::CourierError;
 pub use windows_signer::WindowsActivationSigner;
+
+/// DER-encoded Apple root needed by the push configuration HTTPS endpoint.
+/// Add it to the HTTP client's trust store before connecting.
+pub const APPLE_ROOT_CA: &[u8] = include_bytes!("../certs/AppleRootCA.der");

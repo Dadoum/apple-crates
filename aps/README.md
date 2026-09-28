@@ -5,6 +5,9 @@ request that returns a device certificate. The subsequent APS handshake over
 TLS returns a push token. Neither step needs an Apple account or anisette.
 
 ```rust,ignore
+let client = reqwest::Client::builder()
+    .tls_certs_merge([reqwest::Certificate::from_der(aps::APPLE_ROOT_CA)?])
+    .build()?;
 let identity = aps::activate(&client, &device, &signer).await?;
 let mut connection = aps::PushConnection::connect(&client, identity).await?;
 
@@ -65,6 +68,9 @@ courier's TLS certificate and hostname against the bundled
 payloads stay as bytes, allowing AuthKit and future iMessage consumers to decode
 them independently. IDS registration and iMessage-specific operations are not
 part of this crate.
+
+The HTTPS client also needs this root for `init.push.apple.com`, as shown above.
+It is not included in every operating system's default trust store.
 
 ## Standalone Windows signing identity
 

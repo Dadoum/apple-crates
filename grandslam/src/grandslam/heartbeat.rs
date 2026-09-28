@@ -7,7 +7,7 @@ use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use chrono::{Local, SecondsFormat};
 use plist::{Dictionary, Value};
-use reqwest::{Method, RequestBuilder};
+use reqwest::{Method, RequestBuilder, StatusCode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -55,8 +55,8 @@ pub enum PostDataError {
     Network(#[from] reqwest::Error),
     #[error("Failed to perform the request! {0}")]
     Anisette(#[from] ADIError),
-    #[error("Failed to perform the request! {0}")]
-    Apple(#[from] AppleError),
+    #[error("Check-in returned HTTP {0}")]
+    HttpStatus(StatusCode),
     #[error("Invalid URL bag.")]
     InvalidURLBag,
 }
@@ -198,6 +198,7 @@ impl<'lt, 'adi> HeartbeatHTTPSession<'lt, 'adi> {
         Ok(dict)
     }
 
+    /// Check-in succeeds on HTTP 200; AuthKitWin does not interpret its response body.
     pub async fn post_data(&self, device_data: DeviceData) -> Result<(), PostDataError> {
         let post_data = plist::to_value(&device_data).map_err(PostDataError::Serialization)?;
         let post_data_url = self
@@ -210,19 +211,19 @@ impl<'lt, 'adi> HeartbeatHTTPSession<'lt, 'adi> {
 
         let mut request = Dictionary::new();
         request.insert("Request".into(), post_data);
+        request.insert("Header".into(), Dictionary::new().into());
 
         let response = self
             .heartbeat_request_builder(Method::POST, post_data_url)?
             .header("Content-Type", "text/x-xml-plist")
             .body(plist_to_body(request.into()))
             .send()
-            .await?
-            .bytes()
             .await?;
 
-        let status: Dictionary =
-            plist::from_bytes(&response).map_err(PostDataError::Serialization)?;
-
-        parse_status(&status).map_err(PostDataError::Apple)
+        if response.status() != StatusCode::OK {
+            Err(PostDataError::HttpStatus(response.status()))
+        } else {
+            Ok(())
+        }
     }
 }

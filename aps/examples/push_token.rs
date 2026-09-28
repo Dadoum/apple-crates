@@ -46,6 +46,7 @@ async fn main() -> Result<(), ExampleError> {
     }
     let state_path = PathBuf::from(&args[0]);
     let client = reqwest::Client::builder()
+        .tls_certs_merge([reqwest::Certificate::from_der(aps::APPLE_ROOT_CA)?])
         .timeout(Duration::from_secs(30))
         .build()?;
     let mut connection = match fs::read(&state_path) {

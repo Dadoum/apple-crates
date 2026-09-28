@@ -283,9 +283,7 @@ async fn handshake(
     let target = format!("{}-{host}", 1 + u64::from(OsRng.next_u32()) % count);
     let server_name = ServerName::try_from(verified.to_owned())?;
     let mut roots = RootCertStore::empty();
-    roots.add(CertificateDer::from_slice(include_bytes!(
-        "../certs/AppleRootCA.der"
-    )))?;
+    roots.add(CertificateDer::from_slice(crate::APPLE_ROOT_CA))?;
     let mut config = ClientConfig::builder_with_provider(Arc::new(ring::default_provider()))
         .with_safe_default_protocol_versions()?
         .with_root_certificates(roots)
