@@ -1,4 +1,4 @@
-use super::account::{AccountHTTPSession, IdmsToken};
+use super::account::AccountHTTPSession;
 use super::app::{AppToken, Token};
 use crate::http_session::{AppleError, parse_status};
 use crate::plist_request::plist_to_body;
@@ -143,16 +143,6 @@ impl<'lt, 'adi> HeartbeatHTTPSession<'lt, 'adi> {
 
     pub fn account_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
         self.http_session.account_request_builder(method, url)
-    }
-
-    pub fn identity_request_builder(
-        &self,
-        method: Method,
-        url: &str,
-        idms_token: &IdmsToken,
-    ) -> ADIResult<RequestBuilder> {
-        self.http_session
-            .identity_request_builder(method, url, idms_token)
     }
 
     pub fn heartbeat_request_builder(

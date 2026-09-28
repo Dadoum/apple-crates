@@ -1,7 +1,7 @@
 use adi::proxy::{ADIError, ADIResult};
 use grandslam::bundle_information::BundleInformation;
 use grandslam::plist_request::plist_to_body;
-use grandslam::{AccountHTTPSession, AppHTTPSession, AppToken, IdmsToken, Token};
+use grandslam::{AccountHTTPSession, AppHTTPSession, AppToken, Token};
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
 use reqwest::{Method, RequestBuilder};
@@ -233,16 +233,6 @@ impl<'a, 'b> XcodeSession<'a, 'b> {
 
     pub fn account_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
         self.http_session.account_request_builder(method, url)
-    }
-
-    pub fn identity_request_builder(
-        &self,
-        method: Method,
-        url: &str,
-        idms_token: &IdmsToken,
-    ) -> ADIResult<RequestBuilder> {
-        self.http_session
-            .identity_request_builder(method, url, idms_token)
     }
 
     pub fn app_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {

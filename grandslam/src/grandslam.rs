@@ -2,6 +2,7 @@ mod account;
 mod anisette;
 mod app;
 mod heartbeat;
+mod identity;
 mod secondary_actions;
 mod url_switch;
 
@@ -29,6 +30,7 @@ use log::trace;
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
 pub use heartbeat::*;
+pub use identity::*;
 use reqwest::{Certificate, Method};
 use sha2::{Digest, Sha256};
 use srp::groups::G2048;

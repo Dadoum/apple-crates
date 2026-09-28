@@ -1,4 +1,4 @@
-use super::account::{AccountHTTPSession, IdmsToken};
+use super::account::AccountHTTPSession;
 use adi::proxy::ADIResult;
 use plist::Dictionary;
 use reqwest::{Method, RequestBuilder};
@@ -56,16 +56,6 @@ impl<'lt, 'adi, T: AppToken> AppHTTPSession<'lt, 'adi, T> {
 
     pub fn account_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
         self.http_session.account_request_builder(method, url)
-    }
-
-    pub fn identity_request_builder(
-        &self,
-        method: Method,
-        url: &str,
-        idms_token: &IdmsToken,
-    ) -> ADIResult<RequestBuilder> {
-        self.http_session
-            .identity_request_builder(method, url, idms_token)
     }
 
     pub fn app_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
