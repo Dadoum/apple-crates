@@ -186,8 +186,9 @@ impl PushConnection {
         Ok(())
     }
 
-    /// Receives and acknowledges the next notification, driving keepalive while
-    /// waiting. Reconnect after errors or cancellation during a protocol write.
+    /// Receives the next notification, driving keepalive while waiting.
+    /// Call `acknowledge` once the notification is accepted or stored.
+    /// Reconnect after errors or cancellation during a keepalive write.
     pub async fn receive(&mut self) -> Result<Notification, CourierError> {
         loop {
             let deadline = self.pong_deadline.unwrap_or(self.next_ping);
@@ -216,14 +217,6 @@ impl PushConnection {
                     if token != self.token.as_bytes() {
                         return Err(CourierError::TokenMismatch);
                     }
-                    // Validate the payload before acknowledging it.
-                    frame.required(3)?;
-                    Message::Ack {
-                        token: &self.token,
-                        id,
-                    }
-                    .write(&mut self.stream)
-                    .await?;
                     return Ok(Notification {
                         id,
                         topic,
@@ -238,6 +231,17 @@ impl PushConnection {
                 _ => {}
             }
         }
+    }
+
+    /// Acknowledges receipt of a notification returned by this connection.
+    /// Reconnect after errors or cancellation during the write.
+    pub async fn acknowledge(&mut self, notification: &Notification) -> Result<(), CourierError> {
+        Message::Ack {
+            token: &self.token,
+            id: notification.id,
+        }
+        .write(&mut self.stream)
+        .await
     }
 
     pub async fn close(mut self) -> io::Result<()> {

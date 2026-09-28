@@ -17,7 +17,8 @@ let device_data = grandslam::DeviceData {
 connection.set_topics(&["com.apple.idmsauth"]).await?;
 loop {
     let notification = connection.receive().await?;
-    // Interpret notification.payload according to its topic.
+    // Accept or store notification.payload according to its topic.
+    connection.acknowledge(&notification).await?;
 }
 ```
 
@@ -39,13 +40,15 @@ signer uses embedded constants and Rust cryptography.
 
 ## Connection lifetime and persistence
 
-`receive` handles notification acknowledgements and ping/pong traffic. Keep it
-running while expecting pushes. There are no hidden background tasks or retry
+`receive` returns notifications and handles ping/pong traffic. Call `acknowledge`
+after accepting or storing each notification; it borrows the notification, so
+an acknowledgement error leaves it available to the caller. Keep calling
+`receive` while expecting pushes. There are no hidden background tasks or retry
 loops. Call `reconnect` after transport failure; it reuses the identity/token
 and restores the enabled topics. Use `close` to shut down deliberately. A
 token's existence does not mean a connection is currently reachable.
-If cancelling `receive` during an acknowledgement or keepalive write, reconnect
-before continuing.
+If cancelling `acknowledge` during its write, or `receive` during a keepalive
+write, reconnect before continuing.
 
 Persist the device certificate, private key, and latest token together.
 `PushIdentity::certificate` returns DER bytes; `private_key` exposes the RSA key
