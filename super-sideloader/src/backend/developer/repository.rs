@@ -13,27 +13,25 @@ use crate::backend::developer::certificates::{
 use crate::backend::developer::client::{with_developer_session, DeveloperSessionConfig};
 use crate::backend::developer::keychain::{
     cache_keychain_session, delete_keychain_session, load_keychain_session, save_keychain_session,
-    token_is_near_expiry, DeveloperAccountKeychainSession,
+    token_is_near_expiry, DeveloperAccountKeychainSession, StoredAuthToken,
 };
 use crate::backend::runtime as backend_runtime;
 use crate::backend::{BackendError, BackendResult};
 use crate::domain::{AdiBackendKind, DeveloperAccount, DeveloperDevice, MachineIdentity};
 use chrono::{DateTime, Local};
+use grandslam::bundle_information::AKD_BUNDLE_INFORMATION;
 use grandslam::http_session::AnisetteHTTPSession;
-use grandslam::{AuthOutcome, AuthenticatedHTTPSession, Token};
+use grandslam::{AccountHTTPSession, AuthOutcome, HeartbeatToken};
 use plist::{Dictionary, Value};
 use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
-use grandslam::bundle_information::AKD_BUNDLE_INFORMATION;
 use xcode::{
     AddAppIdAction, AddDeviceAction, AppIdFeature, DeleteAppIdAction, DeleteDeviceAction,
     DeveloperTeam, DownloadTeamProvisioningProfileAction, IOSRequest,
     ListAllDevelopmentCertsAction, ListAppIdsAction, ListDevicesAction, ListTeamsAction,
     RevokeDevelopmentCertAction, SubmitDevelopmentCsrAction, UpdateAppIdAction,
-    ViewDeveloperAction, XcodeSession, XCODE_BUNDLE_INFORMATION, XCODE_TOKEN_IDENTIFIER,
+    ViewDeveloperAction, XcodeSession,
 };
-
-const HEARTBEAT_TOKEN_IDENTIFIER: &str = "com.apple.gs.idms.hb";
 
 #[derive(Clone, Debug)]
 pub(crate) struct DeveloperLoginRequest {
@@ -921,9 +919,12 @@ async fn login_developer_account_async(
         }
     };
 
-    let Some((auth_token, tokens)) =
-        grandslam::parse_tokens_from_server_provided_data(&server_provided_data)
-    else {
+    let (Some(alt_dsid), Some(idms_token), Some(session_key), Some(cookie)) = (
+        server_provided_data.alt_dsid(),
+        server_provided_data.idms_token(),
+        server_provided_data.session_key(),
+        server_provided_data.cookie(),
+    ) else {
         if let Some(action_url) = secondary_action_url {
             return Ok(DeveloperLoginOutcome::RequiresSecondaryAction {
                 detail: format!(
@@ -936,7 +937,12 @@ async fn login_developer_account_async(
             "Apple login succeeded but no reusable account tokens were returned.".to_string(),
         ));
     };
-    let heartbeat_token = match heartbeat_token(&tokens) {
+    let heartbeat_token = match server_provided_data
+        .tokens()
+        .and_then(|tokens| tokens.get::<HeartbeatToken>())
+        .ok_or_else(|| {
+            BackendError::AppleAuth("Apple login did not return a heartbeat token.".to_string())
+        }) {
         Ok(token) => token,
         Err(error) if secondary_action_url.is_some() => {
             let action_url = secondary_action_url.as_deref().unwrap_or_default();
@@ -948,13 +954,9 @@ async fn login_developer_account_async(
         }
         Err(error) => return Err(error),
     };
-    let authenticated_session = AuthenticatedHTTPSession::new(
-        anisette_session,
-        auth_token.clone(),
-        heartbeat_token.clone(),
-    );
-    let xcode_token = match authenticated_session
-        .get_app_token(XCODE_TOKEN_IDENTIFIER)
+    let account_session = AccountHTTPSession::new(anisette_session, alt_dsid.clone());
+    let xcode_token = match account_session
+        .get_app_token(&idms_token, &session_key, &cookie)
         .await
     {
         Ok(token) => token,
@@ -973,9 +975,17 @@ async fn login_developer_account_async(
         }
     };
 
-    let keychain_session =
-        DeveloperAccountKeychainSession::new(auth_token, heartbeat_token, xcode_token.clone());
-    let xcode_session = XcodeSession::new(authenticated_session, xcode_token);
+    let xcode_session = XcodeSession::new(account_session, xcode_token.clone());
+    let keychain_session = DeveloperAccountKeychainSession::new(
+        StoredAuthToken {
+            alt_dsid,
+            idms_token,
+            session_key,
+            cookie,
+        },
+        heartbeat_token,
+        xcode_token,
+    );
     let mut account_cache =
         refresh_full_account(account_id, request.email.trim().to_string(), &xcode_session).await?;
     touch_account_cache(&mut account_cache, keychain_session.expires_at_millis());
@@ -1324,28 +1334,6 @@ fn developer_team_type(team: &DeveloperTeam) -> String {
         .filter(|team_type| !team_type.is_empty())
         .unwrap_or("Developer")
         .to_string()
-}
-
-fn heartbeat_token(tokens: &[(String, Token)]) -> BackendResult<Token> {
-    tokens
-        .iter()
-        .find(|(key, _)| key == HEARTBEAT_TOKEN_IDENTIFIER)
-        .or_else(|| tokens.iter().find(|(key, _)| key.contains(".hb")))
-        .map(|(_, token)| token.clone())
-        .ok_or_else(|| {
-            let identifiers = tokens
-                .iter()
-                .map(|(key, _)| key.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            if identifiers.is_empty() {
-                BackendError::AppleAuth("Apple login did not return a heartbeat token.".to_string())
-            } else {
-                BackendError::AppleAuth(format!(
-                    "Apple login did not return the expected heartbeat token. Returned tokens: {identifiers}"
-                ))
-            }
-        })
 }
 
 fn format_now() -> String {

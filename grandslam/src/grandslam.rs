@@ -1,6 +1,7 @@
+mod account;
 mod anisette;
-mod authenticated_session;
-mod post_data;
+mod app;
+mod heartbeat;
 mod secondary_actions;
 mod url_switch;
 
@@ -15,8 +16,9 @@ use crate::plist_request::dict_to_body;
 use adi::proxy::{ADIError, ADIResult};
 use aes::cipher::block_padding;
 use aes::cipher::block_padding::Pkcs7;
+pub use account::*;
 pub use anisette::*;
-pub use authenticated_session::*;
+pub use app::*;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use bytes::Bytes;
@@ -26,7 +28,7 @@ use hmac::{Hmac, KeyInit, Mac};
 use log::trace;
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
-pub use post_data::*;
+pub use heartbeat::*;
 use reqwest::{Certificate, Method};
 use sha2::{Digest, Sha256};
 use srp::groups::G2048;
@@ -125,8 +127,8 @@ pub async fn http_session_with_custom_bag_url<'lt>(
 
 #[derive(Debug)]
 pub enum AuthOutcome {
-    Success(Dictionary),
-    SecondaryActionRequired(Option<Dictionary>, String),
+    Success(ServerProvidedData),
+    SecondaryActionRequired(Option<ServerProvidedData>, String),
     AnisetteResyncRequired(Vec<u8>),
     AnisetteReprovisionRequired,
     UrlSwitchingRequired(String),
@@ -499,7 +501,7 @@ async fn login_with_credential(
 
             trace!("Parsed server provided data: {:#?}", server_provided_data);
 
-            Ok(server_provided_data)
+            Ok(ServerProvidedData(server_provided_data))
         })
         .transpose()?;
 
@@ -545,52 +547,4 @@ async fn login_with_credential(
             ))
         }
     }
-}
-
-#[derive(Error, Debug)]
-pub enum ValidateCodeError {
-    #[error("The provided code is not valid.")]
-    InvalidCode,
-    #[error("Could not log-in to Apple servers: {0}")]
-    Apple(#[from] AppleError),
-    #[error("Cannot generate device authentication data: {0}")]
-    Anisette(#[from] ADIError),
-    #[error("Network error: {0}")]
-    Network(#[from] reqwest::Error),
-    // vvv Internal errors vvv
-    #[error("Invalid URL bag")]
-    InvalidURLBag,
-    #[error("Cannot parse server response: {0}")]
-    Parsing(plist::Error),
-}
-
-pub async fn validate_code(
-    http_session: &AnisetteHTTPSession<'_, '_>,
-    second_factor_code: u32
-) -> Result<(), ValidateCodeError> {
-    let validate_code_url = http_session
-        .url_bag()
-        .get("validateCode")
-        .and_then(Value::as_string)
-        .ok_or(ValidateCodeError::InvalidURLBag)?;
-
-    let response = http_session
-        .anisette_request_builder(Method::POST, validate_code_url)?
-        .header("security-code", second_factor_code.to_string())
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
-
-    let response_plist: Dictionary =
-        plist::from_bytes(&response).map_err(ValidateCodeError::Parsing)?;
-
-    parse_status(&response_plist)
-        .map_err(|err|
-            match err {
-                AppleError { code: -21669, .. } => ValidateCodeError::InvalidCode,
-                err => ValidateCodeError::Apple(err)
-            }
-        )
 }

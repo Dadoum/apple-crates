@@ -1,11 +1,11 @@
-use adi::proxy::ADIError;
+use adi::proxy::{ADIError, ADIResult};
 use grandslam::bundle_information::BundleInformation;
 use grandslam::plist_request::plist_to_body;
-use grandslam::{AppTokenIdentifier, AuthenticatedHTTPSession, Token};
+use grandslam::{AccountHTTPSession, AppHTTPSession, AppToken, Token};
 use plist::{Dictionary, Value};
 use plist_macros::{array, dict};
-use reqwest::Method;
-use serde::Serialize;
+use reqwest::{Method, RequestBuilder};
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt::Display;
 use thiserror::Error;
@@ -16,9 +16,6 @@ pub const XCODE_BUNDLE_INFORMATION: BundleInformation = BundleInformation {
     bundle_identifier: "com.apple.dt.Xcode",
     bundle_version: "23792",
 };
-
-pub const XCODE_TOKEN_IDENTIFIER: AppTokenIdentifier =
-    AppTokenIdentifier("com.apple.gs.xcode.auth");
 
 const CLIENT_ID: &str = "XABBG36SBA";
 const PROTOCOL_VERSION: &str = "QH65B2";
@@ -195,17 +192,51 @@ pub enum XcodeError {
     Parsing(#[from] plist::Error),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct XcodeToken(String);
+
+impl From<String> for XcodeToken {
+    fn from(token: String) -> Self {
+        Self(token)
+    }
+}
+
+impl AsRef<str> for XcodeToken {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AppToken for XcodeToken {
+    const APP_TOKEN_IDENTIFIER: &'static str = "com.apple.gs.xcode.auth";
+}
+
 pub struct XcodeSession<'a, 'b> {
-    pub http_session: AuthenticatedHTTPSession<'a, 'b>,
-    pub token: Token,
+    pub http_session: AppHTTPSession<'a, 'b, XcodeToken>,
 }
 
 impl<'a, 'b> XcodeSession<'a, 'b> {
-    pub fn new(http_session: AuthenticatedHTTPSession<'a, 'b>, token: Token) -> Self {
+    pub fn new(http_session: AccountHTTPSession<'a, 'b>, token: Token<XcodeToken>) -> Self {
         Self {
-            http_session,
-            token,
+            http_session: AppHTTPSession::new(http_session, token),
         }
+    }
+
+    pub fn simple_request_builder(&self, method: Method, url: &str) -> RequestBuilder {
+        self.http_session.simple_request_builder(method, url)
+    }
+
+    pub fn anisette_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
+        self.http_session.anisette_request_builder(method, url)
+    }
+
+    pub fn account_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
+        self.http_session.account_request_builder(method, url)
+    }
+
+    pub fn app_request_builder(&self, method: Method, url: &str) -> ADIResult<RequestBuilder> {
+        self.http_session.app_request_builder(method, url)
     }
 
     pub async fn perform_developer_action_base<T: DeveloperActionBase>(
@@ -232,12 +263,7 @@ impl<'a, 'b> XcodeSession<'a, 'b> {
         base_request.extend(developer_action.request());
 
         let response = self
-            .http_session
-            .authenticated_request_builder(Method::POST, url.as_str())?
-            .header("Content-Type", "text/x-xml-plist")
-            .header("Accept", "text/x-xml-plist")
-            .header("X-Apple-App-Info", XCODE_TOKEN_IDENTIFIER.0)
-            .header("X-Apple-GS-Token", &self.token)
+            .app_request_builder(Method::POST, url.as_str())?
             .header("X-Xcode-Version", "16.4 (16F6)")
             .query(&[("clientId", CLIENT_ID)])
             .body(plist_to_body(base_request.into()))

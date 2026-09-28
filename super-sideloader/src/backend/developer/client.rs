@@ -3,10 +3,10 @@ use crate::backend::developer::keychain::{token_is_near_expiry, DeveloperAccount
 use crate::backend::{BackendError, BackendResult};
 use crate::domain::{AdiBackendKind, MachineIdentity};
 use grandslam::http_session::AnisetteHTTPSession;
-use grandslam::AuthenticatedHTTPSession;
+use grandslam::AccountHTTPSession;
 use std::future::Future;
 use std::pin::Pin;
-use xcode::{XcodeSession, XCODE_BUNDLE_INFORMATION, XCODE_TOKEN_IDENTIFIER};
+use xcode::{XcodeSession, XCODE_BUNDLE_INFORMATION};
 
 #[derive(Clone, Debug)]
 pub(crate) struct DeveloperSessionConfig {
@@ -40,15 +40,15 @@ where
         BackendError::Network(format!("Failed to create Apple developer session: {error}"))
     })?;
     let anisette_session = AnisetteHTTPSession::new(http_session, proxy.as_ref());
-    let authenticated_session = AuthenticatedHTTPSession::new(
-        anisette_session,
-        session.auth_token.clone(),
-        session.heartbeat_token.clone(),
-    );
-
+    let account_session =
+        AccountHTTPSession::new(anisette_session, session.auth_token.alt_dsid.clone());
     let xcode_token = if token_is_near_expiry(session.xcode_token.expiry_epoch_millis) {
-        authenticated_session
-            .get_app_token(XCODE_TOKEN_IDENTIFIER)
+        account_session
+            .get_app_token(
+                &session.auth_token.idms_token,
+                &session.auth_token.session_key,
+                &session.auth_token.cookie,
+            )
             .await
             .map_err(|error| {
                 BackendError::AppleAuth(format!("Failed to refresh the Xcode app token: {error}"))
@@ -56,12 +56,12 @@ where
     } else {
         session.xcode_token.clone()
     };
+    let xcode_session = XcodeSession::new(account_session, xcode_token.clone());
     let keychain_session = DeveloperAccountKeychainSession::new(
         session.auth_token,
         session.heartbeat_token,
-        xcode_token.clone(),
+        xcode_token,
     );
-    let xcode_session = XcodeSession::new(authenticated_session, xcode_token);
     let value = action(&xcode_session).await?;
 
     Ok(DeveloperApiSessionResult {

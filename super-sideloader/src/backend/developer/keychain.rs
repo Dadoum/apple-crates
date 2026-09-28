@@ -3,11 +3,12 @@
 mod windows_session_store;
 
 use crate::backend::{BackendError, BackendResult};
-use grandslam::{AuthToken, Token};
+use grandslam::{AltDsid, AuthCookie, HeartbeatToken, IdmsToken, SessionKey, Token};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use xcode::XcodeToken;
 
 const KEYCHAIN_SESSION_VERSION: u32 = 1;
 const KEYRING_SERVICE: &str = "zone.dadoum.SuperSideloader";
@@ -42,16 +43,29 @@ impl CachedKeychainLookup {
     }
 }
 
+// Keep the existing keychain representation; request APIs take individual credentials.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct StoredAuthToken {
+    pub(crate) alt_dsid: AltDsid,
+    pub(crate) idms_token: IdmsToken,
+    pub(crate) session_key: SessionKey,
+    pub(crate) cookie: AuthCookie,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct DeveloperAccountKeychainSession {
     pub(crate) version: u32,
-    pub(crate) auth_token: AuthToken,
-    pub(crate) heartbeat_token: Token,
-    pub(crate) xcode_token: Token,
+    pub(crate) auth_token: StoredAuthToken,
+    pub(crate) heartbeat_token: Token<HeartbeatToken>,
+    pub(crate) xcode_token: Token<XcodeToken>,
 }
 
 impl DeveloperAccountKeychainSession {
-    pub(crate) fn new(auth_token: AuthToken, heartbeat_token: Token, xcode_token: Token) -> Self {
+    pub(crate) fn new(
+        auth_token: StoredAuthToken,
+        heartbeat_token: Token<HeartbeatToken>,
+        xcode_token: Token<XcodeToken>,
+    ) -> Self {
         Self {
             version: KEYCHAIN_SESSION_VERSION,
             auth_token,
@@ -250,25 +264,28 @@ mod tests {
     }
 
     fn test_session() -> DeveloperAccountKeychainSession {
-        DeveloperAccountKeychainSession::new(
-            AuthToken {
-                alt_dsid: "alt-dsid".to_string(),
-                idms_token: "idms-token".to_string(),
-                session_key: vec![1, 2, 3],
-                cookie: vec![4, 5, 6],
-                identity_token: "identity-token".to_string(),
-            },
-            Token {
-                duration: 3600,
-                expiry_epoch_millis: current_epoch_millis() + 3_600_000,
-                token: "heartbeat-token".to_string(),
-            },
-            Token {
-                duration: 3600,
-                expiry_epoch_millis: current_epoch_millis() + 3_600_000,
-                token: "xcode-token".to_string(),
-            },
-        )
+        // Version 1 payload, including the old redundant identity_token field.
+        let contents = format!(
+            r#"
+version = 1
+[auth_token]
+alt_dsid = "alt-dsid"
+idms_token = "idms-token"
+session_key = [1, 2, 3]
+cookie = [4, 5, 6]
+identity_token = "identity-token"
+[heartbeat_token]
+duration = 3600
+expiry = {expiry}
+token = "heartbeat-token"
+[xcode_token]
+duration = 3600
+expiry = {expiry}
+token = "xcode-token"
+"#,
+            expiry = current_epoch_millis() + 3_600_000
+        );
+        decode_keychain_session(&contents).unwrap().session
     }
 
     #[test]
@@ -308,7 +325,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         for handle in handles {
-            assert_eq!(handle.join().unwrap().auth_token.idms_token, "idms-token");
+            assert_eq!(
+                handle.join().unwrap().auth_token.idms_token,
+                test_session().auth_token.idms_token
+            );
         }
         assert_eq!(reads.load(Ordering::SeqCst), 1);
     }
