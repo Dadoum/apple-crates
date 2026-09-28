@@ -239,28 +239,31 @@ impl TryFrom<u64> for StatusCode {
 #[serde(transparent)]
 pub struct ContinuationToken(String);
 
+/// Authenticate with an Apple Account username or AltDSID and a password.
+/// Pass `alt_dsid.as_ref()` to use a typed `AltDsid`.
 pub async fn login(
     http_session: &AnisetteHTTPSession<'_, '_>,
-    apple_id: &str,
+    user: &str,
     password: &str,
 ) -> AuthResult {
-    login_with_credential(http_session, apple_id, LoginCredential::Password(password)).await
+    login_with_credential(http_session, user, LoginCredential::Password(password)).await
 }
 
 /// Authenticate using a previously issued continuation token instead of a password.
 ///
-/// Use the Apple ID and device identity associated with the token. The server can
+/// `user` may be an Apple Account username or AltDSID (`alt_dsid.as_ref()`).
+/// Use the account and device identity associated with the token. The server can
 /// still require a secondary action or reject a revoked token; callers decide
 /// whether to fall back to password authentication. Extract the token from the
 /// returned server-provided data again after success to pick up a replacement.
 pub async fn login_with_continuation_token(
     http_session: &AnisetteHTTPSession<'_, '_>,
-    apple_id: &str,
+    user: &str,
     continuation_token: &ContinuationToken,
 ) -> AuthResult {
     login_with_credential(
         http_session,
-        apple_id,
+        user,
         LoginCredential::ContinuationToken(continuation_token),
     )
     .await
@@ -274,7 +277,7 @@ enum LoginCredential<'a> {
 
 async fn login_with_credential(
     http_session: &AnisetteHTTPSession<'_, '_>,
-    apple_id: &str,
+    user: &str,
     credential: LoginCredential<'_>,
 ) -> AuthResult {
     let gs_service_url = http_session
@@ -317,7 +320,7 @@ async fn login_with_credential(
                 "s2k",
                 "s2k_fo" // most Apple servers seem to not even implement that protocol anymore.
             ],
-            "u": apple_id
+            "u": user
         }
     };
 
@@ -397,7 +400,7 @@ async fn login_with_credential(
     };
 
     let verifier =
-        srp_client.process_reply(&a, apple_id.as_bytes(), &processed_password, salt, b)?;
+        srp_client.process_reply(&a, user.as_bytes(), &processed_password, salt, b)?;
 
     let request_plist = dict! {
         "Header": dict!{
@@ -408,7 +411,7 @@ async fn login_with_credential(
             "c": cookie,
             "cpd": cpd,
             "o": "complete",
-            "u": apple_id
+            "u": user
         }
     };
 

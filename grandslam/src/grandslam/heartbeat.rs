@@ -61,6 +61,42 @@ pub enum PostDataError {
     InvalidURLBag,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Service {
+    ICloud,
+    ITunesStore,
+    IMessage,
+    FaceTime,
+    GameCenter,
+    Piggybacking,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckInEvent {
+    Liveness,
+    UpdateDeviceState,
+    SignOutAll,
+    SignOutService(Service),
+}
+
+impl Serialize for CheckInEvent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Liveness => "liveness",
+            Self::UpdateDeviceState => "update-device-state",
+            Self::SignOutAll => "signout-all",
+            Self::SignOutService(service) => match service {
+                Service::ICloud => "signout-icloud",
+                Service::ITunesStore => "signout-itunesstore",
+                Service::IMessage => "signout-imessage",
+                Service::FaceTime => "signout-facetime",
+                Service::GameCenter => "signout-gamecenter",
+                Service::Piggybacking => "signout-piggybacking",
+            },
+        })
+    }
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct DeviceData {
     #[serde(rename = "circleStatus")]
@@ -69,8 +105,7 @@ pub struct DeviceData {
     pub device_color: Option<String>,
     #[serde(rename = "dn")]
     pub device_name: Option<String>,
-    #[serde(rename = "event")]
-    pub event: Option<String>, // liveness
+    pub event: Option<CheckInEvent>,
     #[serde(rename = "imei")]
     pub imei: Option<String>,
     #[serde(rename = "loc")]

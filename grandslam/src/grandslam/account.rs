@@ -21,6 +21,12 @@ use thiserror::Error;
 #[serde(transparent)]
 pub struct AltDsid(pub(super) String);
 
+impl AsRef<str> for AltDsid {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct IdmsToken(String);
