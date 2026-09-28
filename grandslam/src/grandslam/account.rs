@@ -140,6 +140,20 @@ impl<'lt, 'adi> AccountHTTPSession<'lt, 'adi> {
             .header("X-Apple-I-Identity-Id", &self.alt_dsid.0))
     }
 
+    /// Adds Anisette and `X-Apple-Identity-Token` for secondary authentication actions.
+    /// The identity header encodes this account's alternate DSID and its IDMS token.
+    pub fn identity_request_builder(
+        &self,
+        method: Method,
+        url: &str,
+        idms_token: &IdmsToken,
+    ) -> ADIResult<RequestBuilder> {
+        Ok(self.anisette_request_builder(method, url)?.header(
+            "X-Apple-Identity-Token",
+            BASE64_STANDARD.encode(format!("{}:{}", self.alt_dsid.0, idms_token.0)),
+        ))
+    }
+
     pub async fn get_app_token<T: AppToken>(
         &self,
         idms_token: &IdmsToken,
@@ -292,11 +306,7 @@ impl<'lt, 'adi> AccountHTTPSession<'lt, 'adi> {
 
         // AuthKitWin uses POST only when attaching a piggyback verification body.
         let response = self
-            .anisette_request_builder(Method::GET, validate_code_url)?
-            .header(
-                "X-Apple-Identity-Token",
-                BASE64_STANDARD.encode(format!("{}:{}", self.alt_dsid.0, idms_token.0)),
-            )
+            .identity_request_builder(Method::GET, validate_code_url, idms_token)?
             .header("security-code", validation_code)
             .send()
             .await?
