@@ -11,7 +11,7 @@ Here is a breakdown of every crate here:
 
 ### adi
 
-Abstracts an ADI connection, allows direct communication with ADI code.
+Abstracts an ADI connection, allows communication with ADI code.
 
 ### adid-proxy
 

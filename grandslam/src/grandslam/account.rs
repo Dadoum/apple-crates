@@ -1,4 +1,4 @@
-use super::app::{AppToken, Token, TokenBag};
+use super::app::{AppToken, RawToken, Token, TokenBag};
 use crate::grandslam::{ContinuationToken, build_client_provided_data};
 use crate::http_session::{AnisetteHTTPSession, AppleError, parse_status};
 use adi::proxy::{ADIError, ADIResult};
@@ -64,6 +64,63 @@ pub struct SessionKey(Vec<u8>);
 #[serde(transparent)]
 pub struct AuthCookie(Vec<u8>);
 
+/// Credentials used together by GrandSlam's `apptokens` operation.
+/// Kept separate from service tokens and the continuation token; never logged.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MasterToken {
+    idms_token: IdmsToken,
+    session_key: SessionKey,
+    cookie: AuthCookie,
+}
+
+impl MasterToken {
+    pub fn new(idms_token: IdmsToken, session_key: SessionKey, cookie: AuthCookie) -> Self {
+        Self {
+            idms_token,
+            session_key,
+            cookie,
+        }
+    }
+
+    /// Web authentication replaces all three credentials together.
+    pub fn from_response_headers(
+        headers: &reqwest::header::HeaderMap,
+    ) -> Result<Self, ResponseTokenError> {
+        use base64::{Engine, prelude::BASE64_STANDARD};
+        let name = "x-apple-identity-token";
+        let mut values = headers.get_all(name).iter();
+        let value = values
+            .next()
+            .ok_or(ResponseTokenError::InvalidHeader(name))?;
+        if values.next().is_some() {
+            return Err(ResponseTokenError::InvalidHeader(name));
+        }
+        let (_, token) = header_token(value, name)?;
+        let decode = |name| {
+            let value =
+                header_text(headers, name)?.ok_or(ResponseTokenError::InvalidHeader(name))?;
+            BASE64_STANDARD
+                .decode(value)
+                .map_err(|_| ResponseTokenError::InvalidHeader(name))
+        };
+        let session_key = decode("x-apple-session-key")?;
+        let cookie = decode("x-apple-encrypted-session-key")?;
+        if session_key.len() != 32 {
+            return Err(ResponseTokenError::InvalidHeader("x-apple-session-key"));
+        }
+        if cookie.is_empty() {
+            return Err(ResponseTokenError::InvalidHeader(
+                "x-apple-encrypted-session-key",
+            ));
+        }
+        Ok(Self {
+            idms_token: IdmsToken(token.token),
+            session_key: SessionKey(session_key),
+            cookie: AuthCookie(cookie),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(transparent)]
 pub struct ServerProvidedData(pub(super) Dictionary);
@@ -85,6 +142,21 @@ impl ServerProvidedData {
 
     pub fn cookie(&self) -> Option<AuthCookie> {
         Some(AuthCookie(self.0.get("c")?.as_data()?.to_vec()))
+    }
+
+    pub fn master_token(&self) -> Option<MasterToken> {
+        let token = MasterToken {
+            idms_token: self.idms_token()?,
+            session_key: self.session_key()?,
+            cookie: self.cookie()?,
+        };
+        if token.idms_token.0.is_empty()
+            || token.session_key.0.len() != 32
+            || token.cookie.0.is_empty()
+        {
+            return None;
+        }
+        Some(token)
     }
 
     pub fn continuation_token(&self) -> Option<ContinuationToken> {
@@ -148,28 +220,25 @@ impl<'lt, 'adi> AccountHTTPSession<'lt, 'adi> {
 
     pub async fn get_app_token<T: AppToken>(
         &self,
-        idms_token: &IdmsToken,
-        session_key: &SessionKey,
-        cookie: &AuthCookie,
+        master: &MasterToken,
     ) -> Result<Token<T>, AppTokenRequestError> {
-        let token = self
-            .get_app_token_for_service(T::APP_TOKEN_IDENTIFIER, idms_token, session_key, cookie)
-            .await?;
-        Ok(Token {
-            duration: token.duration,
-            expiry_epoch_millis: token.expiry_epoch_millis,
-            token: T::from(token.token),
-        })
+        Ok(self
+            .get_app_token_for_service(T::APP_TOKEN_IDENTIFIER, master)
+            .await?
+            .into())
     }
 
     /// Request a token for a service identifier supplied at runtime.
     pub async fn get_app_token_for_service(
         &self,
         app_token_identifier: &str,
-        idms_token: &IdmsToken,
-        session_key: &SessionKey,
-        cookie: &AuthCookie,
-    ) -> Result<Token, AppTokenRequestError> {
+        master: &MasterToken,
+    ) -> Result<RawToken, AppTokenRequestError> {
+        let MasterToken {
+            idms_token,
+            session_key,
+            cookie,
+        } = master;
         let alt_dsid = self.alt_dsid.0.as_str();
 
         let gs_service_url = self
@@ -308,7 +377,7 @@ pub(super) fn header_text(
 pub(super) fn header_token(
     value: &reqwest::header::HeaderValue,
     name: &'static str,
-) -> Result<(String, Token), ResponseTokenError> {
+) -> Result<(String, RawToken), ResponseTokenError> {
     use base64::{Engine, prelude::BASE64_STANDARD};
     let bytes = BASE64_STANDARD
         .decode(value.as_bytes())
@@ -330,7 +399,7 @@ pub(super) fn header_token(
         .ok_or(ResponseTokenError::InvalidHeader(name))?;
     Ok((
         fields[0].to_owned(),
-        Token {
+        RawToken {
             token: fields[1].to_owned(),
             duration,
             expiry_epoch_millis,

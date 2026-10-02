@@ -12,7 +12,9 @@ pub use activation::{
     ActivationDevice, ActivationError, ActivationSignature, ActivationSigner, IdentityError,
     PushIdentity, activate,
 };
-pub use connection::{ConnectError, Notification, PushConnection, PushToken};
+pub use connection::{
+    ConnectError, Event, Notification, PushConnection, PushToken, SendError, SendStatus,
+};
 pub use protocol::CourierError;
 pub use windows_signer::WindowsActivationSigner;
 

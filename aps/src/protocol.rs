@@ -49,6 +49,12 @@ pub(crate) enum Message<'a> {
         token: &'a PushToken,
         topics: &'a [[u8; 20]],
     },
+    Send {
+        token: &'a PushToken,
+        topic: &'a [u8; 20],
+        id: u32,
+        payload: &'a [u8],
+    },
     Ack {
         token: &'a PushToken,
         id: u32,
@@ -78,8 +84,8 @@ impl Message<'_> {
                 frame.push(12, certificate)?;
                 frame.push(13, nonce)?;
                 frame.push(14, signature)?;
-                // Version-like field used by rustpush; this Windows build sends 5.
-                // Its precise semantics are not established.
+                // Protocol version used by rustpush. Windows sends 5; macOS 27
+                // sends 12 with additional capabilities we do not implement.
                 frame.push(16, 9u16.to_be_bytes())?;
                 frame
             }
@@ -89,6 +95,20 @@ impl Message<'_> {
                 for topic in topics {
                     frame.push(2, topic)?;
                 }
+                frame
+            }
+            Self::Send {
+                token,
+                topic,
+                id,
+                payload,
+            } => {
+                let mut frame = Frame::new(Command::Notification);
+                frame.push(4, id.to_be_bytes())?;
+                // Outgoing messages reverse the incoming token/topic fields.
+                frame.push(1, topic)?;
+                frame.push(2, token.as_bytes())?;
+                frame.push(3, payload)?;
                 frame
             }
             Self::Ack { token, id } => {
@@ -128,10 +148,12 @@ pub enum CourierError {
     InvalidField(u8),
     #[error("Unexpected APS command {0}")]
     UnexpectedCommand(u8),
-    #[error("The notification belongs to another push token")]
+    #[error("The message belongs to another push token")]
     TokenMismatch,
     #[error("Courier operation timed out")]
     Timeout,
+    #[error("APS message {0} was not acknowledged before the deadline; reconnect before retrying")]
+    AcknowledgementTimeout(u32),
 }
 
 // command:u8, length:u32, then (id:u8, length:u16, value), all big endian.

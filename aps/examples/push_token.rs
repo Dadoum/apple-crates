@@ -1,4 +1,4 @@
-//! cargo run -p aps --example push_token -- STATE.plist
+//! cargo run -p aps --example push_token -- STATE.plist [--check-connection]
 use aps::{ActivationDevice, PushConnection, PushIdentity, PushToken, WindowsActivationSigner};
 use plist::Data;
 use rsa::{
@@ -11,7 +11,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 enum ExampleError {
-    #[error("usage: push_token STATE.plist")]
+    #[error("usage: push_token STATE.plist [--check-connection]")]
     Usage,
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -41,7 +41,7 @@ struct SavedState {
 #[tokio::main]
 async fn main() -> Result<(), ExampleError> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() != 1 {
+    if args.is_empty() || args.len() > 2 || (args.len() == 2 && args[1] != "--check-connection") {
         return Err(ExampleError::Usage);
     }
     let state_path = PathBuf::from(&args[0]);
@@ -109,6 +109,38 @@ async fn main() -> Result<(), ExampleError> {
         connection.push_token().as_bytes().len(),
         state_path.display()
     );
+    println!(
+        "Courier payload limit: {} bytes",
+        connection.max_payload_size()
+    );
+    if args.len() == 2 {
+        // Drive the first keepalive (60s) and its response deadline (30s).
+        // Do not print received payloads or credential values.
+        let until = tokio::time::Instant::now() + Duration::from_secs(95);
+        loop {
+            match tokio::time::timeout_at(until, connection.receive()).await {
+                Ok(Ok(aps::Event::Notification(notification))) => {
+                    connection.acknowledge(&notification).await?;
+                }
+                Ok(Ok(aps::Event::Acknowledgement { .. })) => {}
+                Ok(Err(error)) => return Err(error.into()),
+                Err(_) => break,
+            }
+        }
+        println!("95-second receive/keepalive check passed");
+        let token = connection.push_token().clone();
+        connection.reconnect(&client).await?;
+        println!(
+            "Reconnected; token unchanged: {}",
+            connection.push_token() == &token
+        );
+        // Persist again because reconnect may replace the token.
+        let state = SavedState {
+            token: connection.push_token().clone(),
+            ..state
+        };
+        plist::to_writer_xml(options.open(&state_path)?, &state)?;
+    }
     connection.close().await?;
     Ok(())
 }

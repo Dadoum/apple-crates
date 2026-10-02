@@ -10,6 +10,8 @@ use std::borrow::Cow;
 use std::fmt::Display;
 use thiserror::Error;
 
+pub mod downloads;
+
 /// From Xcode 16.4
 pub const XCODE_BUNDLE_INFORMATION: BundleInformation = BundleInformation {
     bundle_name: "Xcode",

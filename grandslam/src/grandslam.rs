@@ -51,14 +51,20 @@ const ROOT_CA: &[u8] = include_bytes!("grandslam/root-ca.pem");
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
+/// use grandslam::bundle_information::AUTH_KIT_BUNDLE_INFORMATION;
+/// use grandslam::device::Device;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let device = Device {
 ///     device_model: "MacBookPro13,2".to_string(),
 ///     operating_system_information: "macOS;15.6.1;24G90".to_string(),
 ///     device_uuid: "A8B31C86-359B-4D95-8950-BA5DD8FFC46F".to_string(),
 /// };
 ///
-/// let grandslam_http_session = grandslam::http_session(device, XCODE_BUNDLE_INFORMATION).await?;
+/// let grandslam_http_session = grandslam::http_session(device, AUTH_KIT_BUNDLE_INFORMATION).await?;
+/// # Ok(())
+/// # }
 /// ```
 pub async fn http_session(
     device: Device,
@@ -410,8 +416,7 @@ async fn login_with_credential(
         buf
     };
 
-    let verifier =
-        srp_client.process_reply(&a, user.as_bytes(), &processed_password, salt, b)?;
+    let verifier = srp_client.process_reply(&a, user.as_bytes(), &processed_password, salt, b)?;
 
     let request_plist = dict! {
         "Header": dict!{

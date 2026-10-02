@@ -19,9 +19,15 @@ let device_data = grandslam::DeviceData {
 
 connection.set_topics(&["com.apple.idmsauth"]).await?;
 loop {
-    let notification = connection.receive().await?;
-    // Accept or store notification.payload according to its topic.
-    connection.acknowledge(&notification).await?;
+    match connection.receive().await? {
+        aps::Event::Notification(notification) => {
+            // Accept or store notification.payload according to its topic.
+            connection.acknowledge(&notification).await?;
+        }
+        aps::Event::Acknowledgement { id, status } => {
+            // Match id to an outgoing send; status is Accepted or Rejected(code).
+        }
+    }
 }
 ```
 
@@ -33,7 +39,7 @@ and CSR. A returned `PushIdentity` always contains the matching device key and
 certificate, and a returned `PushConnection` always has a token.
 
 Errors follow those boundaries: `IdentityError`, `ActivationError<S::Error>`,
-`ConnectError`, and `CourierError`. Signer errors keep their concrete type.
+`ConnectError`, `SendError`, and `CourierError`. Signer errors keep their concrete type.
 Connecting moves the identity into the connection; reconnecting reuses it
 without cloning the private key.
 
@@ -43,8 +49,9 @@ signer uses embedded constants and Rust cryptography.
 
 ## Connection lifetime and persistence
 
-`receive` returns notifications and handles ping/pong traffic. Call `acknowledge`
-after accepting or storing each notification; it borrows the notification, so
+`receive` returns notifications or outgoing-send acknowledgements and handles
+ping/pong traffic. Call `acknowledge` after accepting or storing each notification;
+it borrows the notification, so
 an acknowledgement error leaves it available to the caller. Keep calling
 `receive` while expecting pushes. There are no hidden background tasks or retry
 loops. Call `reconnect` after transport failure; it reuses the identity/token
@@ -52,6 +59,28 @@ and restores the enabled topics. Use `close` to shut down deliberately. A
 token's existence does not mean a connection is currently reachable.
 If cancelling `acknowledge` during its write, or `receive` during a keepalive
 write, reconnect before continuing.
+
+`send(id, topic, payload)` writes unchanged payload bytes. Only one send can await
+acknowledgement at a time; attempting another returns
+`SendError::PendingAcknowledgement`. Use a new ID for each send. Continue calling
+`receive`, processing notifications as usual, until `Event::Acknowledgement`
+reports that ID. The courier can omit the ID on the wire, in which case it is
+associated with the one outstanding send, as in macOS. An explicit nonmatching
+ID is ignored. `SendStatus::Accepted` means courier acceptance, not delivery to a
+recipient. Nonzero response codes are preserved as `SendStatus::Rejected(code)`.
+
+`max_payload_size()` exposes the courier's advertised limit; larger payloads are
+rejected before writing or occupying the pending slot. If the courier omits the
+limit, the two-byte TLV length is the local ceiling, not a promise of acceptance.
+
+`receive` reports `CourierError::AcknowledgementTimeout(id)` after 30 seconds
+without a matching acknowledgement. This is the crate's existing operation
+timeout policy; callers can impose shorter deadlines. The caller owns retry
+policy. After a timeout, transport failure, or cancelled send, reconnect before
+sending again. Reconnect
+clears the outstanding send without replaying it: its outcome is unknown, and
+retrying could duplicate delivery. Payload encoding and IDS service registration
+remain the caller's responsibility.
 
 Persist the device certificate, private key, and latest token together.
 `PushIdentity::certificate` returns DER bytes; `private_key` exposes the RSA key
@@ -83,6 +112,9 @@ once. No DLL or extraction step is needed. Signing errors use `rsa::Error`.
 cargo run -p aps --example push_token -- /path/to/push-state.plist
 ```
 
+Add `--check-connection` to drive receive/keepalive for 95 seconds, reconnect,
+and report whether the token was preserved. It does not print tokens or payloads.
+
 The example activates on its first run, subscribes to `com.apple.idmsauth`,
 saves the identity/token, and closes the connection. Subsequent runs restore
 that state. The state file contains a private key; the example requests mode
@@ -94,7 +126,10 @@ wrapper is at `0x180005250`. The APS protocol was cross-checked against Apple's
 Windows client and rustpush's public protocol implementation. This crate does
 not depend on rustpush or its account APIs.
 
-See [the signing format notes](docs/windows-signing.md) for the decoded wrapping
+Outgoing messages and acknowledgement handling were also checked against
+macOS 27's `apsd`; see [the comparison notes](../research/aps/docs/macos-protocol.md).
+
+See [the signing format notes](../research/aps/docs/windows-signing.md) for the decoded wrapping
 format and its provenance.
 
 All ten embedded identities passed independent RSA signature verification.

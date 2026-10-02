@@ -1,5 +1,5 @@
 use crate::http_session::{AnisetteHTTPSession, AppleError, parse_status};
-use adi::proxy::ADIError;
+use adi::proxy::{ADIError, ADIProvisioningSession, ADIProxy, ADIResult};
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use plist::{Dictionary, Value};
@@ -306,6 +306,7 @@ pub async fn sync_machine(
         .ok_or_else(|| SyncError::ResponseStructure(sync_machine_response_plist.clone()))?;
     if code != 0 {
         return Err(SyncError::Apple(AppleError {
+            subcode: status.get("sec").and_then(Value::as_signed_integer),
             code,
             message: status
                 .get("em")

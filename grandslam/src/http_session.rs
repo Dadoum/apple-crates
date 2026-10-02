@@ -18,6 +18,7 @@ const SIMULATED_AUTHENTICATION_FRAMEWORK_INFORMATION: BundleInformation =
 pub struct AppleError {
     // description: String,
     pub code: i64,
+    pub subcode: Option<i64>,
     pub message: String,
 }
 
@@ -64,6 +65,9 @@ pub fn parse_status(status_dict: &Dictionary) -> Result<(), AppleError> {
             Err(AppleError {
                 // description: ed.to_string(),
                 code: ec,
+                subcode: status_dict
+                    .get("sec")
+                    .and_then(plist::Value::as_signed_integer),
                 message: em.to_string(),
             })
         }

@@ -3476,6 +3476,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "icloud"
+version = "0.1.0"
+dependencies = [
+ "adi",
+ "grandslam",
+ "plist",
+ "plist-macros",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "icu_collections"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6112,6 +6127,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-adi"
+version = "0.1.0"
+dependencies = [
+ "adi",
+ "aes 0.9.1",
+ "base64",
+ "cbc 0.2.1",
+ "getrandom 0.4.3",
+ "grandslam",
+ "hex",
+ "md-5",
+ "plist",
+ "reqwest",
+ "serde_json",
+ "sha1 0.11.0",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7113,7 +7149,6 @@ dependencies = [
  "crc32fast",
  "der",
  "directories",
- "dlopen2",
  "env_logger",
  "flate2",
  "futures",
@@ -7128,12 +7163,12 @@ dependencies = [
  "libc",
  "library-coreadi",
  "log",
- "ouroboros",
  "pem-rfc7468",
  "plist",
  "rand 0.10.2",
  "reqwest",
  "rsa",
+ "rust-adi",
  "serde",
  "sha1 0.11.0",
  "sha2 0.10.9",

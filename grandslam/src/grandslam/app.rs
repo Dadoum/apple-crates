@@ -5,13 +5,32 @@ use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Token<T = String> {
+pub struct Token<T: AppToken> {
     pub duration: u64,
     // #[serde(rename = "cts")]
     // pub start_epoch_millis: u64,
     #[serde(rename = "expiry")]
     pub expiry_epoch_millis: u64,
     pub token: T,
+}
+
+/// An app token for a service identifier supplied at runtime.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RawToken {
+    pub duration: u64,
+    #[serde(rename = "expiry")]
+    pub expiry_epoch_millis: u64,
+    pub token: String,
+}
+
+impl<T: AppToken> From<RawToken> for Token<T> {
+    fn from(token: RawToken) -> Self {
+        Self {
+            duration: token.duration,
+            expiry_epoch_millis: token.expiry_epoch_millis,
+            token: T::from(token.token),
+        }
+    }
 }
 
 pub trait AppToken: From<String> + AsRef<str> {
@@ -43,7 +62,7 @@ impl TokenBag {
         Ok(Self(tokens))
     }
 
-    pub fn entries(&self) -> Result<std::collections::BTreeMap<String, Token>, plist::Error> {
+    pub fn entries(&self) -> Result<std::collections::BTreeMap<String, RawToken>, plist::Error> {
         self.0
             .iter()
             .map(|(service, value)| Ok((service.clone(), plist::from_value(value)?)))
@@ -51,12 +70,8 @@ impl TokenBag {
     }
 
     pub fn get<T: AppToken>(&self) -> Option<Token<T>> {
-        let token: Token = plist::from_value(self.0.get(T::APP_TOKEN_IDENTIFIER)?).ok()?;
-        Some(Token {
-            duration: token.duration,
-            expiry_epoch_millis: token.expiry_epoch_millis,
-            token: T::from(token.token),
-        })
+        let token: RawToken = plist::from_value(self.0.get(T::APP_TOKEN_IDENTIFIER)?).ok()?;
+        Some(token.into())
     }
 }
 

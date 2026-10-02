@@ -97,6 +97,7 @@ impl<'lt, 'adi> IdentityHTTPSession<'lt, 'adi> {
             0 => Ok(()),
             -21669 => Err(ValidateCodeError::InvalidCode),
             code => Err(AppleError {
+                subcode: response_plist.get("sec").and_then(Value::as_signed_integer),
                 code,
                 message: response_plist
                     .get("em")

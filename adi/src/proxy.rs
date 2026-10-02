@@ -31,7 +31,7 @@ impl Serialize for EncryptionType {
 }
 
 #[repr(i32)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ADIError {
     // -45001 - Invalid parameters, have all the library fields been properly initialized?
     InvalidParameters = -45001,

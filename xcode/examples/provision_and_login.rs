@@ -65,21 +65,12 @@ async fn grandslam_test(
     match &auth_outcome {
         AuthOutcome::Success(server_provided_data)
         | AuthOutcome::SecondaryActionRequired(Some(server_provided_data), _) => {
-            if let (
-                Some(alt_dsid),
-                Some(idms_token),
-                Some(session_key),
-                Some(cookie),
-            ) = (
+            if let (Some(alt_dsid), Some(master)) = (
                 server_provided_data.alt_dsid(),
-                server_provided_data.idms_token(),
-                server_provided_data.session_key(),
-                server_provided_data.cookie(),
+                server_provided_data.master_token(),
             ) {
-                let http_session =
-                    AccountHTTPSession::new(http_session, alt_dsid);
-
-                let xcode_token = http_session.get_app_token(&idms_token, &session_key, &cookie).await?;
+                let http_session = AccountHTTPSession::new(http_session, alt_dsid);
+                let xcode_token = http_session.get_app_token(&master).await?;
                 let xcode_session = XcodeSession::new(http_session, xcode_token);
 
                 let developer =

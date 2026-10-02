@@ -401,7 +401,7 @@ impl<T: CoreADIADIProxy> ADIProxy for T {
     fn get_all_provisioned_accounts(&self) -> ADIResult<Vec<ADIAccount>> {
         let coreadi_accounts = <Self as CoreADIADIProxy>::get_all_provisioned_accounts(self)?;
         let accounts: Vec<ADIAccount> = unsafe {
-            (&*coreadi_accounts).iter().map(
+            coreadi_accounts.iter().map(
                 |&CoreADIAccount {
                      ds_id,
                      mid_len,
@@ -465,7 +465,7 @@ impl<T: CoreADIADIProxy> ADIProxy for T {
         let (mid_buf, otp_buf) = <Self as CoreADIADIProxy>::request_otp(self, ds_id)?;
         let (mid, otp) = (mid_buf.to_vec(), otp_buf.to_vec());
         self.dispose(mid_buf).and_then(|()| self.dispose(otp_buf))?;
-        Ok((mid.into(), otp.into()))
+        Ok((mid, otp))
     }
 
     fn set_provisioning_path(&self, path: &CStr) -> ADIResult<()> {
