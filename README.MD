@@ -1,3 +1,6 @@
+> [!IMPORTANT]  
+> Moved to [tangled.org](https://tangled.org/dadoum.zone/apple-crates)
+
 # apple crate collection
 
 At some point I started a sideloader rewrite in Rust in
